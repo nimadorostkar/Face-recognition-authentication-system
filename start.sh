@@ -42,8 +42,19 @@ check_docker() {
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null; then
-        print_error "Docker Compose is not installed. Please install Docker Compose first."
+    # Check for docker compose (new) or docker-compose (old)
+    if ! command -v docker &> /dev/null; then
+        print_error "Docker is not installed. Please install Docker first."
+        exit 1
+    fi
+    
+    # Try both docker compose (v2) and docker-compose (v1)
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE="docker-compose"
+    else
+        print_error "Docker Compose is not available. Please install Docker Desktop or docker-compose."
         exit 1
     fi
     
@@ -57,7 +68,7 @@ start_system() {
     check_docker
     
     print_info "Building and starting containers..."
-    docker-compose up --build -d
+    $DOCKER_COMPOSE up --build -d
     
     print_info "Waiting for services to be ready..."
     sleep 5
@@ -92,7 +103,7 @@ stop_system() {
     print_header "Stopping Face Recognition System"
     
     print_info "Stopping containers..."
-    docker-compose down
+    $DOCKER_COMPOSE down
     
     print_success "System stopped"
 }
@@ -110,9 +121,9 @@ show_logs() {
     print_header "System Logs"
     
     if [ -z "$1" ]; then
-        docker-compose logs -f
+        $DOCKER_COMPOSE logs -f
     else
-        docker-compose logs -f "$1"
+        $DOCKER_COMPOSE logs -f "$1"
     fi
 }
 
@@ -120,7 +131,7 @@ show_logs() {
 show_status() {
     print_header "System Status"
     
-    docker-compose ps
+    $DOCKER_COMPOSE ps
     
     echo ""
     print_info "Testing API health..."
@@ -143,7 +154,7 @@ clean_system() {
     
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         print_info "Removing containers and volumes..."
-        docker-compose down -v
+        $DOCKER_COMPOSE down -v
         print_success "Cleanup complete"
     else
         print_info "Cleanup cancelled"
