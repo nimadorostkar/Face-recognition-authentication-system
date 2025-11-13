@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { recognizeFace, registerUser, captureFrame } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { SimpleLivenessDetector, extractFrameData, LivenessResult } from '@/lib/liveness';
 
 export default function WebcamRecognition() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -13,9 +14,14 @@ export default function WebcamRecognition() {
   const [showRegister, setShowRegister] = useState(false);
   const [registrationName, setRegistrationName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+  const [livenessCheck, setLivenessCheck] = useState<LivenessResult | null>(null);
+  const [isCheckingLiveness, setIsCheckingLiveness] = useState(false);
+  const [livenessProgress, setLivenessProgress] = useState(0);
   const router = useRouter();
   const { login } = useAuth();
   const recognitionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const livenessDetectorRef = useRef<SimpleLivenessDetector | null>(null);
+  const livenessIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Start webcam
   useEffect(() => {
@@ -32,7 +38,10 @@ export default function WebcamRecognition() {
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
           setStream(mediaStream);
-          setMessage('Webcam ready. Starting face recognition...');
+          setMessage('Webcam ready. Starting liveness check...');
+          
+          // Initialize liveness detector
+          livenessDetectorRef.current = new SimpleLivenessDetector();
         }
       } catch (error) {
         console.error('Error accessing webcam:', error);
@@ -50,67 +59,107 @@ export default function WebcamRecognition() {
       if (recognitionIntervalRef.current) {
         clearInterval(recognitionIntervalRef.current);
       }
+      if (livenessIntervalRef.current) {
+        clearInterval(livenessIntervalRef.current);
+      }
     };
   }, []);
 
-  // Start continuous recognition once webcam is ready
+  // Start liveness check once webcam is ready
   useEffect(() => {
-    if (!stream || !videoRef.current || isRecognizing) return;
+    if (!stream || !videoRef.current || isCheckingLiveness) return;
 
-    setIsRecognizing(true);
+    setIsCheckingLiveness(true);
 
-    // Wait for video to be ready
     const video = videoRef.current;
     video.onloadedmetadata = () => {
       video.play();
-      startContinuousRecognition();
+      startLivenessCheck();
     };
 
-    function startContinuousRecognition() {
-      setMessage('Looking for faces...');
+    function startLivenessCheck() {
+      setMessage('Starting face recognition...');
 
-      // Recognize every 2 seconds
-      recognitionIntervalRef.current = setInterval(async () => {
-        if (!videoRef.current) return;
+      livenessIntervalRef.current = setInterval(() => {
+        if (!videoRef.current || !livenessDetectorRef.current) return;
 
-        try {
-          const imageBase64 = captureFrame(videoRef.current);
-          if (!imageBase64) return;
+        const frameData = extractFrameData(videoRef.current);
+        if (!frameData) return;
 
-          const result = await recognizeFace(imageBase64);
+        livenessDetectorRef.current.addFrame(frameData);
+        const progress = livenessDetectorRef.current.getProgress();
+        setLivenessProgress(progress);
 
-          if (result.match && result.name && result.user_id) {
-            // Face recognized - auto login!
-            setMessage(`Welcome back, ${result.name}! Logging in...`);
-            
-            // Stop recognition
-            if (recognitionIntervalRef.current) {
-              clearInterval(recognitionIntervalRef.current);
-            }
+        const result = livenessDetectorRef.current.checkLiveness();
+        setLivenessCheck(result);
 
-            // Login and redirect
-            login(result.name, result.user_id);
-            setTimeout(() => {
-              router.push('/profile');
-            }, 1000);
-          } else {
-            // Not recognized
-            setMessage('Face not recognized. Would you like to register?');
-            setShowRegister(true);
+        if (result.isLive) {
+          // Simple check passed!
+          setMessage('✅ Ready! Starting face recognition...');
+          
+          if (livenessIntervalRef.current) {
+            clearInterval(livenessIntervalRef.current);
           }
-        } catch (error: any) {
-          console.error('Recognition error:', error);
-          setMessage(`Recognition active... ${error.message || ''}`);
+
+          // Start face recognition
+          setTimeout(() => {
+            startContinuousRecognition();
+          }, 500);
+        } else if (progress >= 100 && !result.isLive) {
+          setMessage('Please move slightly and try again...');
+          livenessDetectorRef.current.reset();
+          setLivenessProgress(0);
         }
-      }, 2000); // Check every 2 seconds
+      }, 200); // Check every 200ms
     }
 
     return () => {
-      if (recognitionIntervalRef.current) {
-        clearInterval(recognitionIntervalRef.current);
+      if (livenessIntervalRef.current) {
+        clearInterval(livenessIntervalRef.current);
       }
     };
-  }, [stream, router, login, isRecognizing]);
+  }, [stream, isCheckingLiveness]);
+
+  // Function to start continuous face recognition after liveness check
+  function startContinuousRecognition() {
+    setIsRecognizing(true);
+    setMessage('Looking for faces...');
+
+    // Recognize every 2 seconds
+    recognitionIntervalRef.current = setInterval(async () => {
+      if (!videoRef.current) return;
+
+      try {
+        const imageBase64 = captureFrame(videoRef.current);
+        if (!imageBase64) return;
+
+        const result = await recognizeFace(imageBase64);
+
+        if (result.match && result.name && result.user_id) {
+          // Face recognized - auto login!
+          setMessage(`Welcome back, ${result.name}! Logging in...`);
+          
+          // Stop recognition
+          if (recognitionIntervalRef.current) {
+            clearInterval(recognitionIntervalRef.current);
+          }
+
+          // Login and redirect
+          login(result.name, result.user_id);
+          setTimeout(() => {
+            router.push('/profile');
+          }, 1000);
+        } else {
+          // Not recognized
+          setMessage('Face not recognized. Would you like to register?');
+          setShowRegister(true);
+        }
+      } catch (error: any) {
+        console.error('Recognition error:', error);
+        setMessage(`Recognition active... ${error.message || ''}`);
+      }
+    }, 2000); // Check every 2 seconds
+  }
 
   // Handle registration
   async function handleRegister() {
@@ -120,6 +169,12 @@ export default function WebcamRecognition() {
     }
 
     if (!videoRef.current) return;
+
+    // Check liveness before registration
+    if (!livenessCheck || !livenessCheck.isLive) {
+      setMessage('⚠️ Please complete liveness check first. Move your head or blink.');
+      return;
+    }
 
     setIsRegistering(true);
     setMessage('Capturing your face...');
@@ -153,8 +208,12 @@ export default function WebcamRecognition() {
       setMessage(`Registration failed: ${error.message}`);
       setIsRegistering(false);
       
-      // Restart recognition
-      setIsRecognizing(false);
+      // Restart liveness check
+      setIsCheckingLiveness(false);
+      if (livenessDetectorRef.current) {
+        livenessDetectorRef.current.reset();
+      }
+      setLivenessProgress(0);
     }
   }
 
@@ -172,7 +231,7 @@ export default function WebcamRecognition() {
             width: '100%',
             maxWidth: '640px',
             height: 'auto',
-            border: '2px solid #333',
+            border: livenessCheck?.isLive ? '3px solid #4CAF50' : '2px solid #333',
             borderRadius: '8px',
             backgroundColor: '#000',
           }}
@@ -225,9 +284,10 @@ export default function WebcamRecognition() {
       <div style={{ marginTop: '30px', fontSize: '14px', color: '#666' }}>
         <p><strong>How it works:</strong></p>
         <ul>
-          <li>The system continuously scans for faces</li>
-          <li>If recognized, you&apos;ll be automatically logged in</li>
-          <li>If not recognized, you can register as a new user</li>
+          <li>The system starts your webcam automatically</li>
+          <li>Face recognition runs continuously</li>
+          <li>If recognized, you&apos;ll be logged in instantly</li>
+          <li>If not recognized, you can register with your name</li>
         </ul>
       </div>
     </div>
