@@ -33,7 +33,9 @@ RUN adduser --system --uid 1001 nextjs
 # Copy built files - handle missing public directory gracefully
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-RUN mkdir -p ./public
+
+# Copy public folder (media files, etc.)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 

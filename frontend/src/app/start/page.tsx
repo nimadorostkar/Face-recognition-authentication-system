@@ -6,9 +6,12 @@ import { SimpleLivenessDetector, extractFrameData, LivenessResult } from '@/lib/
 
 export default function StartPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const displayVideoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<'checking' | 'yes' | 'no'>('checking');
+  const [userName, setUserName] = useState<string>('');
   const [fadeIn, setFadeIn] = useState(false);
+  const [videoSource, setVideoSource] = useState('/media/faceid.mp4');
   const recognitionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const livenessDetectorRef = useRef<SimpleLivenessDetector | null>(null);
   const livenessIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -113,10 +116,19 @@ export default function StartPage() {
         setTimeout(() => {
           if (result.match && result.name) {
             setStatus('yes');
+            setUserName(result.name);
+            setVideoSource('/media/success.mp4');
           } else {
             setStatus('no');
+            setUserName('');
+            setVideoSource('/media/fail.mp4');
           }
           setFadeIn(true);
+          
+          // Reload video with new source
+          if (displayVideoRef.current) {
+            displayVideoRef.current.load();
+          }
         }, 300);
       } catch (error: any) {
         console.error('Recognition error:', error);
@@ -124,7 +136,14 @@ export default function StartPage() {
         setFadeIn(false);
         setTimeout(() => {
           setStatus('no');
+          setUserName('');
+          setVideoSource('/media/fail.mp4');
           setFadeIn(true);
+          
+          // Reload video with new source
+          if (displayVideoRef.current) {
+            displayVideoRef.current.load();
+          }
         }, 300);
       }
     }, 2000);
@@ -144,7 +163,7 @@ export default function StartPage() {
         padding: 0,
       }}
     >
-      {/* Hidden webcam video */}
+      {/* Hidden webcam video for face recognition */}
       <video
         ref={videoRef}
         autoPlay
@@ -153,7 +172,21 @@ export default function StartPage() {
         style={{ display: 'none' }}
       />
 
-      <h1 style={{ fontSize: '48px', margin: 0, marginBottom: '20px' }}>hi</h1>
+      {/* Face ID animation video */}
+      <video
+        ref={displayVideoRef}
+        autoPlay
+        loop
+        muted
+        playsInline
+        style={{
+          width: '300px',
+          height: 'auto',
+          marginBottom: '20px',
+        }}
+      >
+        <source src={videoSource} type="video/mp4" />
+      </video>
       
       <div
         style={{
@@ -162,7 +195,7 @@ export default function StartPage() {
           transition: 'opacity 0.5s ease-in-out',
         }}
       >
-        {status === 'checking' ? '' : status}
+        {status === 'checking' ? '' : status === 'yes' ? `hi ${userName}` : 'scan qr to register'}
       </div>
     </div>
   );
