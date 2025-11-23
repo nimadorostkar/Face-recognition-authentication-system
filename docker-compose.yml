@@ -20,7 +20,12 @@ services:
       - face_recognition_network
 
   api:
-    build: ./api
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      # Use BuildKit for faster builds
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     container_name: face_recognition_api
     ports:
       - "8000:8000"

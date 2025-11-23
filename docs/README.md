@@ -55,8 +55,15 @@ Face-recognition-authentication-system/
 
 ### Prerequisites
 - **Docker** and **Docker Compose** installed
-- At least **2GB RAM** for containers
+- At least **8GB RAM** for Docker (required for building dlib)
+- At least **4 CPU cores** allocated to Docker
 - (Optional) CUDA-enabled GPU for future upgrades
+
+### ⚠️ IMPORTANT: First Build Takes 8-12 Minutes
+
+The Docker build will appear to hang at "Building wheel for dlib" - **THIS IS NORMAL!** 
+
+Building the `dlib` library takes 8-12 minutes even on fast machines. See [QUICK_START.md](QUICK_START.md) for optimization tips.
 
 ### 1. Clone and Start
 
@@ -64,12 +71,32 @@ Face-recognition-authentication-system/
 # Clone the repository
 cd Face-recognition-authentication-system
 
-# Build and start containers
-docker-compose up --build
+# OPTION 1: Use the build helper script (RECOMMENDED)
+./docker-build.sh   # macOS/Linux
+# OR
+docker-build.bat    # Windows
 
-# Wait for initialization (~1-2 minutes on first run)
+# OPTION 2: Manual build (will take 8-12 minutes on first run)
+export DOCKER_BUILDKIT=1  # Enable faster builds
+docker-compose build
+
+# Start containers
+docker-compose up
+
+# Wait for initialization (~1-2 minutes after build)
 # You'll see: "✓ Database initialized successfully"
 ```
+
+### 🔧 Build Troubleshooting
+
+If the build is taking too long or appears stuck:
+
+1. **Check it's actually working**: Open Docker Desktop, check CPU usage (should be 50-100%)
+2. **Increase Docker resources**: Settings → Resources → Memory: 8GB, CPUs: 4-6 cores
+3. **Use optimized build**: See [QUICK_START.md](QUICK_START.md) for faster options
+4. **Be patient**: The first build genuinely takes 8-12 minutes for `dlib` compilation
+
+**See detailed solutions**: [DOCKER_BUILD_FIX.md](DOCKER_BUILD_FIX.md)
 
 ### 2. Verify Installation
 
