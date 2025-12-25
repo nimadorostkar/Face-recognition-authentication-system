@@ -20,6 +20,7 @@ export default function EnergyEfficientStartPage() {
   const mainLoopRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionTimerRef = useRef<NodeJS.Timeout | null>(null);
   const qrTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const faceDetectionDelayRef = useRef<NodeJS.Timeout | null>(null);
 
   // State
   const [systemState, setSystemState] = useState<SystemState>(SystemState.IDLE);
@@ -27,14 +28,14 @@ export default function EnergyEfficientStartPage() {
   const [status, setStatus] = useState<'checking' | 'yes' | 'no'>('checking');
   const [userName, setUserName] = useState<string>('');
   const [fadeIn, setFadeIn] = useState(false);
-  const [videoSource, setVideoSource] = useState('/media/faceid.gif');
+  const [videoSource, setVideoSource] = useState('/media/look.mp4');
   const [showQR, setShowQR] = useState(false);
   const showQRRef = useRef<boolean>(false);
 
-  // Transition states for smooth fade between ai.gif and faceid.gif
+  // Transition states for smooth fade between large ai.gif and smaller ai.gif in face detection section
   const [showAiGif, setShowAiGif] = useState(true); // Start with ai.gif visible
   const [aiGifOpacity, setAiGifOpacity] = useState(1); // Full opacity initially
-  const [faceidGifOpacity, setFaceidGifOpacity] = useState(0); // Hidden initially
+  const [faceidGifOpacity, setFaceidGifOpacity] = useState(0); // Hidden initially (legacy: used only for ai.gif)
 
   // Post-success screen state
   const [showPostSuccess, setShowPostSuccess] = useState(false);
@@ -44,6 +45,21 @@ export default function EnergyEfficientStartPage() {
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [wordOpacity, setWordOpacity] = useState(1);
   const wordSequenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Typing effect state for post-success message
+  const [postSuccessTypingText, setPostSuccessTypingText] = useState('');
+  const postSuccessTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const postSuccessTypingStartedRef = useRef<boolean>(false);
+  
+  // Typing effect state for "Hi, I'm Avrou AI" text
+  const [typingText, setTypingText] = useState('');
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const typingStartedRef = useRef<boolean>(false);
+  
+  // Typing effect state for "I couldn't identify you" text (fail video)
+  const [failTypingText, setFailTypingText] = useState('');
+  const failTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const failTypingStartedRef = useRef<boolean>(false);
   
   // Restart timer - reload page after completion
   const restartTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -136,6 +152,18 @@ export default function EnergyEfficientStartPage() {
       if (restartTimerRef.current) {
         clearTimeout(restartTimerRef.current);
       }
+      if (faceDetectionDelayRef.current) {
+        clearTimeout(faceDetectionDelayRef.current);
+      }
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+      }
+      if (failTypingTimerRef.current) {
+        clearTimeout(failTypingTimerRef.current);
+      }
+      if (postSuccessTypingTimerRef.current) {
+        clearTimeout(postSuccessTypingTimerRef.current);
+      }
       if (cameraRef.current) {
         cameraRef.current.stop();
       }
@@ -199,6 +227,43 @@ export default function EnergyEfficientStartPage() {
   }, [showPostSuccess, userName]);
 
   /**
+   * Typing effect for post-success message
+   */
+  useEffect(() => {
+    if (!showPostSuccess) {
+      postSuccessTypingStartedRef.current = false;
+      setPostSuccessTypingText('');
+      if (postSuccessTypingTimerRef.current) {
+        clearTimeout(postSuccessTypingTimerRef.current);
+        postSuccessTypingTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (postSuccessTypingStartedRef.current) {
+      return;
+    }
+
+    postSuccessTypingStartedRef.current = true;
+    const fullText =
+      'The community link has been sent.\n\n' +
+      '✌️ show Victory to take photo.\n\n' +
+      'Just 2 more coffee to get your gift';
+
+    // Show all 3 lines at once (no typing effect)
+    postSuccessTypingTimerRef.current = setTimeout(() => {
+      setPostSuccessTypingText(fullText);
+    }, 300);
+
+    return () => {
+      if (postSuccessTypingTimerRef.current) {
+        clearTimeout(postSuccessTypingTimerRef.current);
+        postSuccessTypingTimerRef.current = null;
+      }
+    };
+  }, [showPostSuccess]);
+
+  /**
    * Restart page after completion (success or failure)
    */
   useEffect(() => {
@@ -229,6 +294,160 @@ export default function EnergyEfficientStartPage() {
       }
     };
   }, [showPostSuccess, showQR]);
+
+  /**
+   * Add blinking cursor animation CSS
+   */
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
+  /**
+   * Typing effect for "Hi, I'm Avrou AI" text in face detection section
+   */
+  useEffect(() => {
+    // Only start typing when face detection section is visible with look.mp4
+    if (!showUI || videoSource !== '/media/look.mp4' || status !== 'checking') {
+      typingStartedRef.current = false;
+      setTypingText('');
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Start typing effect only once
+    if (typingStartedRef.current) {
+      return;
+    }
+
+    typingStartedRef.current = true;
+    const fullText = "Hi, I'm Avrou";
+    const words = fullText.split(' ');
+    let currentWordIndex = 0;
+    let currentCharIndex = 0;
+    let displayedText = '';
+
+    function typeNext() {
+      if (currentWordIndex >= words.length) {
+        return; // Finished typing
+      }
+
+      const currentWord = words[currentWordIndex];
+      
+      if (currentCharIndex < currentWord.length) {
+        // Type next character
+        displayedText += currentWord[currentCharIndex];
+        setTypingText(displayedText);
+        currentCharIndex++;
+        typingTimerRef.current = setTimeout(typeNext, 120); // 120ms per character (slower)
+      } else {
+        // Word complete, add space and move to next word
+        if (currentWordIndex < words.length - 1) {
+          displayedText += ' ';
+          setTypingText(displayedText);
+          currentWordIndex++;
+          currentCharIndex = 0;
+          typingTimerRef.current = setTimeout(typeNext, 180); // slightly longer pause between words
+        } else {
+          // All words typed
+          setTypingText(displayedText);
+        }
+      }
+    }
+
+    // Start typing after a short delay
+    typingTimerRef.current = setTimeout(() => {
+      typeNext();
+    }, 500); // Slightly longer initial delay
+
+    return () => {
+      if (typingTimerRef.current) {
+        clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = null;
+      }
+    };
+  }, [showUI, videoSource, status]);
+
+  /**
+   * Typing effect for "I couldn't identify you" text under fail.mp4
+   */
+  useEffect(() => {
+    // Only start typing when fail.mp4 is shown
+    if (videoSource !== '/media/fail.mp4' || status !== 'no' || showQR) {
+      failTypingStartedRef.current = false;
+      setFailTypingText('');
+      if (failTypingTimerRef.current) {
+        clearTimeout(failTypingTimerRef.current);
+        failTypingTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Start typing effect only once
+    if (failTypingStartedRef.current) {
+      return;
+    }
+
+    failTypingStartedRef.current = true;
+    const fullText = "I couldn't identify you";
+    const words = fullText.split(' ');
+    let currentWordIndex = 0;
+    let currentCharIndex = 0;
+    let displayedText = '';
+
+    function typeNext() {
+      if (currentWordIndex >= words.length) {
+        return; // Finished typing
+      }
+
+      const currentWord = words[currentWordIndex];
+      
+      if (currentCharIndex < currentWord.length) {
+        // Type next character
+        displayedText += currentWord[currentCharIndex];
+        setFailTypingText(displayedText);
+        currentCharIndex++;
+        failTypingTimerRef.current = setTimeout(typeNext, 100); // 100ms per character
+      } else {
+        // Word complete, add space and move to next word
+        if (currentWordIndex < words.length - 1) {
+          displayedText += ' ';
+          setFailTypingText(displayedText);
+          currentWordIndex++;
+          currentCharIndex = 0;
+          failTypingTimerRef.current = setTimeout(typeNext, 200); // 200ms pause between words
+        } else {
+          // All words typed
+          setFailTypingText(displayedText);
+        }
+      }
+    }
+
+    // Start typing after a short delay
+    failTypingTimerRef.current = setTimeout(() => {
+      typeNext();
+    }, 500);
+
+    return () => {
+      if (failTypingTimerRef.current) {
+        clearTimeout(failTypingTimerRef.current);
+        failTypingTimerRef.current = null;
+      }
+    };
+  }, [videoSource, status, showQR]);
 
   /**
    * Main processing loop - runs at adaptive rate
@@ -327,23 +546,31 @@ export default function EnergyEfficientStartPage() {
       
       // Only trigger state change if we have enough consecutive motion frames
       if (motionCounterRef.current >= MOTION_REQUIRED_FRAMES) {
-        stateMachine.onMotionDetected();
-        
         // Show UI when motion is confirmed with smooth fade transition
         if (!showUI) {
-          console.log('[UI] Significant motion confirmed - transitioning from ai.gif to faceid.gif');
+          console.log('[UI] Significant motion confirmed - transitioning from large ai.gif to smaller ai.gif in face detection section');
           
-          // Step 1: Fade out ai.gif
+          // Step 1: Fade out ai.gif (faster fade)
           setAiGifOpacity(0);
           
-          // Step 2: After fade out, fade in faceid.gif and show UI
+          // Step 2: After fade out, show ai.gif in face detection section and show UI
           setTimeout(() => {
-            setShowAiGif(false); // Hide ai.gif completely
+            setShowAiGif(false); // Hide large ai.gif completely
             setShowUI(true);
-            setFaceidGifOpacity(1); // Fade in faceid.gif
+            // look.mp4 is shown via <video> and uses the generic fadeIn opacity
             setFadeIn(true);
-            console.log('[UI] Transition complete - faceid.gif visible');
-          }, 500); // 500ms fade duration
+            console.log('[UI] Transition complete - look.mp4 visible in face detection section');
+            
+            // Step 3: Short wait before starting face recognition (faster)
+            if (faceDetectionDelayRef.current) {
+              clearTimeout(faceDetectionDelayRef.current);
+            }
+            faceDetectionDelayRef.current = setTimeout(() => {
+              console.log('[UI] Starting face recognition after short delay');
+              stateMachine.onMotionDetected(); // Now start face recognition
+              faceDetectionDelayRef.current = null;
+            }, 2000); // 2 seconds delay
+          }, 500); // 500ms fade duration (faster fade)
         }
       }
     } else {
@@ -390,7 +617,7 @@ export default function EnergyEfficientStartPage() {
    */
   function handleRecognitionSuccess(name: string) {
     console.log(`[Recognition] Success: ${name}`);
-    console.log('[Video] Switching from faceid.gif to success.mp4');
+    console.log('[Video] Switching from look.mp4 to success.mp4');
     
     if (stateMachineRef.current) {
       stateMachineRef.current.onRecognitionSuccess(name);
@@ -432,7 +659,7 @@ export default function EnergyEfficientStartPage() {
           clearTimeout(postSuccessTimerRef.current);
         }
         postSuccessTimerRef.current = setTimeout(() => {
-          console.log('[PostSuccess] Showing blue.gif and purple.gif screen');
+          console.log('[PostSuccess] Showing post-success screen');
           setShowPostSuccess(true);
           setFadeIn(false); // Hide success video
         }, 2000); // 2 seconds after success video starts
@@ -473,6 +700,14 @@ export default function EnergyEfficientStartPage() {
             setUserName('');
             setVideoSource('/media/fail.mp4');
             setFadeIn(true);
+            
+            // Reset fail typing effect
+            setFailTypingText('');
+            failTypingStartedRef.current = false;
+            if (failTypingTimerRef.current) {
+              clearTimeout(failTypingTimerRef.current);
+              failTypingTimerRef.current = null;
+            }
             
             if (displayVideoRef.current) {
               displayVideoRef.current.load();
@@ -521,19 +756,19 @@ export default function EnergyEfficientStartPage() {
 
   return (
     <div
-      style={{
-        width: '100vw',
-        height: '100vh',
-        backgroundColor: 'black', // Always black background
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        margin: 0,
-        padding: 0,
-        transition: 'background-color 0.5s ease',
-      }}
-    >
+        style={{
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'black', // Always black background
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          margin: 0,
+          padding: 0,
+          transition: 'background-color 0.5s ease',
+        }}
+      >
       {/* Hidden webcam video for face recognition */}
       <video
         ref={videoRef}
@@ -643,118 +878,215 @@ export default function EnergyEfficientStartPage() {
               zIndex: 2,
             }}
           >
-            Join Needo Now!
+            Join Avrou Now!
           </div>
         </>
       ) : videoSource.endsWith('.gif') ? (
         // Render GIF as img element with smooth fade transition and edge fade
         <div
           style={{
-            position: 'relative',
-            width: '300px',
-            height: 'auto',
+            display: showQR ? 'none' : 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
             marginBottom: '20px',
-            display: showQR ? 'none' : 'block',
           }}
         >
-          <img
-            key={videoSource}
-            src={videoSource}
-            alt="Face ID"
-            onLoad={() => {
-              console.log('[Image] Loaded:', videoSource, 'Status:', status);
-              // For faceid.gif, use the fade transition opacity
-              if (videoSource === '/media/faceid.gif') {
-                setFaceidGifOpacity(1);
-              }
-              setFadeIn(true);
-            }}
-            onError={(e) => {
-              console.error('[Image] Error loading:', videoSource, e);
-            }}
-            style={{
-              width: '100%',
-              height: 'auto',
-              opacity: videoSource === '/media/faceid.gif' ? faceidGifOpacity : (fadeIn ? 1 : 0),
-            transition: 'opacity 0.5s ease-in-out',
-            display: 'block',
-          }}
-        />
-          {/* Radial fade overlay to blend edges with black background */}
           <div
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              background: `
-                radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
-                linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
-              `,
-              pointerEvents: 'none',
-              borderRadius: '8px',
+              position: 'relative',
+              width: '350px', // Smaller size for ai.gif
+              height: 'auto',
             }}
-          />
+          >
+            <img
+              key={videoSource}
+              src={videoSource}
+              alt="Face ID"
+              onLoad={() => {
+                console.log('[Image] Loaded:', videoSource, 'Status:', status);
+                setFadeIn(true);
+              }}
+              onError={(e) => {
+                console.error('[Image] Error loading:', videoSource, e);
+              }}
+              style={{
+                width: '100%',
+                height: 'auto',
+                opacity: videoSource === '/media/ai.gif' ? faceidGifOpacity : (fadeIn ? 1 : 0),
+                transition: 'opacity 0.5s ease-in-out',
+                display: 'block',
+              }}
+            />
+            {/* Radial fade overlay to blend edges with black background */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                background: `
+                  radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
+                  linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
+                `,
+                pointerEvents: 'none',
+                borderRadius: '8px',
+              }}
+            />
+          </div>
+          {/* Typing effect text "Hi, I'm Avrou AI" */}
+          {videoSource === '/media/look.mp4' && status === 'checking' && (
+            <div
+              style={{
+                color: '#fff',
+                fontSize: '18px',
+                fontWeight: 'normal',
+                textAlign: 'center',
+                marginTop: '15px',
+                opacity: fadeIn ? 1 : 0,
+                transition: 'opacity 0.5s ease-in-out',
+                minHeight: '25px',
+              }}
+            >
+              {typingText}
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: '2px',
+                  height: '18px',
+                  backgroundColor: '#fff',
+                  marginLeft: '2px',
+                  animation: 'blink 1s step-end infinite',
+                }}
+              >
+                |
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         // Render MP4 as video element with fade overlay
         <div
           style={{
-            position: 'relative',
-            width: '300px',
-            height: 'auto',
+            display: showQR ? 'none' : 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
             marginBottom: '20px',
-            display: showQR ? 'none' : 'block',
           }}
         >
-          <video
-            key={videoSource} // Force re-render when video source changes
-            ref={displayVideoRef}
-            autoPlay
-            loop={status === 'checking'} // Only loop faceid.gif, not success/fail
-            muted
-            playsInline
-            onLoadedData={() => {
-              // Fade in for all videos when loaded
-              console.log('[Video] Loaded:', videoSource, 'Status:', status);
-              setFadeIn(true);
-            }}
-            onError={(e) => {
-              console.error('[Video] Error loading:', videoSource, e);
-            }}
-            style={{
-              width: '100%',
-              height: 'auto',
-              opacity: fadeIn ? 1 : 0,
-              transition: 'opacity 0.5s ease-in-out',
-              display: 'block',
-            }}
-          >
-            <source src={videoSource} type="video/mp4" key={videoSource} />
-        </video>
-          {/* Radial fade overlay to blend edges with black background */}
           <div
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              background: `
-                radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
-                linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
-                linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
-              `,
-              pointerEvents: 'none',
-              borderRadius: '8px',
+              position: 'relative',
+              width: videoSource === '/media/look.mp4' ? '340px' : '300px',
+              height: 'auto',
             }}
-          />
+          >
+            <video
+              key={videoSource} // Force re-render when video source changes
+              ref={displayVideoRef}
+              autoPlay
+              loop={status === 'checking'} // Only loop while checking, not success/fail
+              muted
+              playsInline
+              onLoadedData={() => {
+                // Fade in for all videos when loaded
+                console.log('[Video] Loaded:', videoSource, 'Status:', status);
+                setFadeIn(true);
+              }}
+              onError={(e) => {
+                console.error('[Video] Error loading:', videoSource, e);
+              }}
+              style={{
+                width: '100%',
+                height: 'auto',
+                opacity: fadeIn ? 1 : 0,
+                transition: 'opacity 0.5s ease-in-out',
+                display: 'block',
+              }}
+            >
+              <source src={videoSource} type="video/mp4" key={videoSource} />
+            </video>
+            {/* Radial fade overlay to blend edges with black background */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                background: `
+                  radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
+                  linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
+                  linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
+                `,
+                pointerEvents: 'none',
+                borderRadius: '8px',
+              }}
+            />
+          </div>
+          {/* Typing effect text "Hi, I'm Avrou" under look.mp4 */}
+          {videoSource === '/media/look.mp4' && status === 'checking' && (
+            <div
+              style={{
+                color: '#fff',
+                fontSize: '18px',
+                fontWeight: 'normal',
+                textAlign: 'center',
+                marginTop: '15px',
+                opacity: fadeIn ? 1 : 0,
+                transition: 'opacity 0.5s ease-in-out',
+                minHeight: '25px',
+              }}
+            >
+              {typingText}
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: '2px',
+                  height: '18px',
+                  backgroundColor: '#fff',
+                  marginLeft: '2px',
+                  animation: 'blink 1s step-end infinite',
+                }}
+              >
+                |
+              </span>
+            </div>
+          )}
+          {/* Typing effect text "I couldn't identify you" under fail.mp4 */}
+          {videoSource === '/media/fail.mp4' && status === 'no' && (
+            <div
+              style={{
+                color: '#fff',
+                fontSize: '18px',
+                fontWeight: 'normal',
+                textAlign: 'center',
+                marginTop: '15px',
+                opacity: fadeIn ? 1 : 0,
+                transition: 'opacity 0.5s ease-in-out',
+                minHeight: '25px',
+              }}
+            >
+              {failTypingText}
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: '2px',
+                  height: '18px',
+                  backgroundColor: '#fff',
+                  marginLeft: '2px',
+                  animation: 'blink 1s step-end infinite',
+                }}
+              >
+                |
+              </span>
+            </div>
+          )}
         </div>
       )}
       
@@ -773,13 +1105,13 @@ export default function EnergyEfficientStartPage() {
           transition: 'opacity 0.5s ease-in-out',
         }}
       >
-          Hi, {userName} 💞 
+          Welcome back, {userName} 
       </div>
       )}
         </>
       )}
       
-      {/* Post-success screen - blue.gif and purple.gif */}
+      {/* Post-success screen */}
       {showPostSuccess && (
         <div
           style={{
@@ -790,195 +1122,164 @@ export default function EnergyEfficientStartPage() {
             height: '100vh',
             backgroundColor: 'black',
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-start',
             justifyContent: 'center',
+            padding: '48px 48px 0',
             zIndex: 10,
           }}
         >
-          {/* purple.gif on the left, vertically centered - 2x bigger */}
           <div
             style={{
-              position: 'absolute',
-              left: '3%',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              maxWidth: '40%',
-              maxHeight: '80%',
-              width: 'auto',
-              height: 'auto',
-          }}
-        >
-            <img
-              src="/media/purple.gif"
-              alt="Purple"
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-              }}
-            />
-            {/* Radial fade overlay to blend edges with black background */}
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                background: `
-                  radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
-                  linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
-                `,
-                pointerEvents: 'none',
-              }}
-            />
-            {/* user.png centered on purple.gif with text below */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                zIndex: 1,
-              }}
-            >
-              {/* user.png */}
-              <img
-                src="/media/user.png"
-                alt="User"
-                style={{
-                  maxWidth: '120px',
-                  maxHeight: '120px',
-                  width: 'auto',
-                  height: 'auto',
-                  marginBottom: '10px',
-                }}
-              />
-              
-              {/* Text below user.png: username only */}
-              <div
-                style={{
-                  textAlign: 'center',
-                  color: '#fff',
-                }}
-              >
-                <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
-                  {userName || 'Guest'} ✨
-                </div>
-              </div>
-          </div>
-            
-            {/* Text below purple.gif: coffee count and gift text */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                marginTop: '15px',
-                textAlign: 'center',
-                zIndex: 1,
-              }}
-            >
-              <div style={{ fontSize: '18px', color: '#ccc', marginBottom: '8px' }}>
-                25 coffee ☕ until today
-              </div>
-              <div style={{ fontSize: '14px', color: '#aaa', fontStyle: 'italic' }}>
-                Just 1 more order to unlock your gift!
-              </div>
-          </div>
-          </div>
-          
-          {/* blue.gif on the right, vertically centered - cropped to remove black borders - bigger */}
-          <div
-            style={{
-              position: 'absolute',
-              right: '3%',
-              top: '50%',
-              transform: 'translateY(-50%)',
-              maxWidth: '55%',
-              maxHeight: '90%',
-              width: 'auto',
-              height: 'auto',
-              overflow: 'hidden',
+              width: '100%',
+              maxWidth: '1200px',
+              display: 'flex',
+              gap: '24px',
+              alignItems: 'stretch',
+              justifyContent: 'center',
             }}
           >
-            <img
-              src="/media/blue.gif"
-              alt="Blue"
-              style={{
-                width: '120%',
-                height: '120%',
-                objectFit: 'cover',
-                objectPosition: 'center',
-              }}
-            />
-            {/* Radial fade overlay to blend edges with black background */}
+            {/* Top section: 2 horizontally stacked sections */}
             <div
               style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                background: `
-                  radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
-                  linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
-                  linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
-                `,
-                pointerEvents: 'none',
-              }}
-            />
-            {/* Animated word sequence centered on blue circle */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '60%',
-                transform: 'translate(-50%, -50%)',
-                color: '#fff',
-                fontSize: '38px',
-                fontWeight: 'bold',
-                textAlign: 'center',
-                zIndex: 2,
-                pointerEvents: 'none',
-                opacity: wordOpacity,
-                transition: 'opacity 0.5s ease-in-out',
+                flex: 0.75,
+                minHeight: '340px',
+                padding: '22px',
+                borderRadius: '16px',
+                background: 'transparent',
+                backdropFilter: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'flex-start',
+                gap: '28px',
               }}
             >
-              {(() => {
-                const sequence = ['Hi', userName || 'Guest', 'welcome', 'reg.png'];
-                const currentItem = sequence[currentWordIndex];
-                
-                if (currentItem === 'reg.png') {
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <img
-                        src="/media/reg.png"
-                        alt="Registration"
-                        style={{
-                          width: '120px',
-                          height: 'auto',
-                          marginBottom: '15px',
-                        }}
-                      />
-                      <div style={{ fontSize: '14px', fontWeight: 'normal', color: '#ccc' }}>
-                        Scan dashboard
+              {/* Line 1 with 1.mp4 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <video
+                  src="/media/1.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
+                />
+                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
+                  The community link has been sent.
+                </span>
+              </div>
+
+              {/* Line 2 with 2.png */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <img
+                  src="/media/2.png"
+                  alt=""
+                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
+                />
+                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
+                  ✌️ show Victory to take photo.
+                </span>
+              </div>
+
+              {/* Line 3 with 3.png */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <img
+                  src="/media/3.png"
+                  alt=""
+                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
+                />
+                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
+                  Just 2 more coffee to get your gift
+                </span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                flex: 1.5,
+                minHeight: '380px',
+                padding: '18px',
+                borderRadius: '16px',
+                background: 'rgba(255,255,255,0.04)',
+                backdropFilter: 'blur(6px)',
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+            >
+              {/* blue.gif with animated word sequence */}
+              <img
+                src="/media/blue.gif"
+                alt="Blue"
+                style={{
+                  width: '140%',
+                  height: '140%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  transform: 'translate(-14%, -14%)',
+                }}
+              />
+              {/* Radial fade overlay to blend edges with black background */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  background: `
+                    radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
+                    linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
+                    linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
+                    linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
+                    linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
+                  `,
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Animated word sequence centered */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  color: '#fff',
+                  fontSize: '34px',
+                  fontWeight: 'bold',
+                  textAlign: 'center',
+                  zIndex: 2,
+                  pointerEvents: 'none',
+                  opacity: wordOpacity,
+                  transition: 'opacity 0.5s ease-in-out',
+                  padding: '0 12px',
+                }}
+              >
+                {(() => {
+                  const sequence = ['Hi', userName || 'Guest', 'welcome', 'reg.png'];
+                  const currentItem = sequence[currentWordIndex];
+
+                  if (currentItem === 'reg.png') {
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <img
+                          src="/media/reg.png"
+                          alt="Registration"
+                          style={{
+                            width: '120px',
+                            height: 'auto',
+                            marginBottom: '12px',
+                          }}
+                        />
+                        <div style={{ fontSize: '14px', fontWeight: 'normal', color: '#ccc' }}>
+                          Scan dashboard
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
-                
-                return currentItem;
-              })()}
+                    );
+                  }
+
+                  return currentItem;
+                })()}
+              </div>
             </div>
           </div>
         </div>
