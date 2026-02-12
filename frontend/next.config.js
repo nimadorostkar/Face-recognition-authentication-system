@@ -8,7 +8,8 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: process.env.NEXT_PUBLIC_API_URL || 'https://app.avrocafe.ir:8000/:path*',
+        destination: process.env.NEXT_PUBLIC_API_URL || 'https://api:8000/:path*',
+
       },
     ];
   },
