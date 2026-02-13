@@ -74,11 +74,12 @@ app = FastAPI(
 # TODO: Restrict origins in production to specific domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific origins in production
+    allow_origins=["https://app.avrocafe.ir"],  # Change to specific origins in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 @app.on_event("startup")
