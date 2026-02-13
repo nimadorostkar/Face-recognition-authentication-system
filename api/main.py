@@ -16,6 +16,7 @@ from sqlalchemy import text
 from datetime import datetime
 from typing import List
 import logging
+import os
 
 # Import local modules
 from database import init_db, get_db, User, find_similar_faces, engine
@@ -71,10 +72,19 @@ app = FastAPI(
 )
 
 # Configure CORS for web frontend integration
-# TODO: Restrict origins in production to specific domains
+# Supports comma-separated CORS_ORIGINS override for deployment environments.
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,https://app.avrocafe.ir",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app.avrocafe.ir"],  # Change to specific origins in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -528,4 +538,3 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
-
