@@ -1,7 +1,20 @@
 // API utility functions for face recognition backend
 
-// Use environment variable or default to localhost
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Use relative /api so Next.js rewrites to the backend (works in dev, Docker, and production).
+// Avoids browser calling localhost:8000 directly, which fails when API is on another host.
+const API_BASE_URL = '/api';
+
+async function getErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    if (body.detail?.detail) return body.detail.detail;
+    if (typeof body.detail === 'string') return body.detail;
+    if (body.message) return body.message;
+  } catch {
+    // non-JSON or empty body
+  }
+  return response.statusText || fallback;
+}
 
 export interface RegisterResponse {
   status: string;
@@ -35,8 +48,8 @@ export async function registerUser(name: string, imageBase64: string): Promise<R
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail?.detail || 'Registration failed');
+    const msg = await getErrorMessage(response, 'Registration failed');
+    throw new Error(msg);
   }
 
   return response.json();
@@ -57,8 +70,8 @@ export async function recognizeFace(imageBase64: string): Promise<RecognizeRespo
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail?.detail || 'Recognition failed');
+    const msg = await getErrorMessage(response, 'Recognition failed');
+    throw new Error(msg);
   }
 
   return response.json();

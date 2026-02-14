@@ -74,14 +74,7 @@ app = FastAPI(
 # Configure CORS for web frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://app.avrocafe.ir",
-        "https://avrocafe.ir",        
-        "https://app.avro-cafe.ir",  
-        "https://avro-cafe.ir",
-        "http://92.114.51.122:8000",
-        "http://92.114.51.122",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -162,6 +155,7 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 @app.post("/register/", response_model=RegisterResponse, tags=["Authentication"])
+@app.post("/register", response_model=RegisterResponse, tags=["Authentication"])
 async def register_user(
     request: RegisterRequest,
     db: Session = Depends(get_db)
@@ -275,6 +269,7 @@ async def register_user(
 
 
 @app.post("/recognize/", response_model=RecognizeResponse, tags=["Authentication"])
+@app.post("/recognize", response_model=RecognizeResponse, tags=["Authentication"])
 async def recognize_face(
     request: RecognizeRequest,
     db: Session = Depends(get_db),

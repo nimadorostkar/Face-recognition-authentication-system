@@ -17,6 +17,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# So /api rewrites to the API service when running in Docker (next.config.js reads this at build time)
+ARG API_BACKEND_URL=http://api:8000
+ENV API_BACKEND_URL=$API_BACKEND_URL
+
 # Build Next.js app
 RUN npm run build
 
