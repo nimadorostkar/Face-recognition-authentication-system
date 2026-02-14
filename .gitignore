@@ -60,10 +60,6 @@ htmlcov/
 # Face images (for testing)
 test_images/
 sample_faces/
-*.jpg
-*.jpeg
-*.png
-*.gif
 
 # Temporary files
 tmp/
