@@ -19,6 +19,34 @@ services:
     networks:
       - face_recognition_network
 
+  # Ensures face_recognition DB exists and schema is applied when the volume was
+  # created by an older run (PostgreSQL skips init and does not create the DB).
+  db-init:
+    image: ankane/pgvector:latest
+    container_name: face_recognition_db_init
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./init.sql:/init.sql:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        until psql -U postgres -h db -c 'SELECT 1' 2>/dev/null; do sleep 1; done
+        if ! psql -U postgres -h db -d face_recognition -c 'SELECT 1' 2>/dev/null; then
+          psql -U postgres -h db -c "CREATE DATABASE face_recognition"
+          psql -U postgres -h db -d face_recognition -f /init.sql
+          echo "Created database face_recognition and applied schema."
+        else
+          echo "Database face_recognition already exists."
+        fi
+    networks:
+      - face_recognition_network
+    restart: "no"
+
   api:
     build:
       context: ./api
@@ -32,8 +60,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/face_recognition
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     volumes:
       - ./api:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
