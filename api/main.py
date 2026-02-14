@@ -72,19 +72,16 @@ app = FastAPI(
 )
 
 # Configure CORS for web frontend integration
-# Supports comma-separated CORS_ORIGINS override for deployment environments.
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,https://app.avrocafe.ir",
-    ).split(",")
-    if origin.strip()
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=[
+        "https://app.avrocafe.ir",
+        "https://avrocafe.ir",        
+        "https://app.avro-cafe.ir",  
+        "https://avro-cafe.ir",
+        "http://92.114.51.122:8000",
+        "http://92.114.51.122",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
