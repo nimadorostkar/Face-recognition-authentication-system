@@ -46,12 +46,7 @@ export default function EnergyEfficientStartPage() {
   const [wordOpacity, setWordOpacity] = useState(1);
   const wordSequenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Typing effect state for post-success message
-  const [postSuccessTypingText, setPostSuccessTypingText] = useState('');
-  const postSuccessTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const postSuccessTypingStartedRef = useRef<boolean>(false);
-  
-  // Typing effect state for "Hi, I'm Avrou AI" text
+  // Typing effect state for "Hi, I'm Avro AI" text
   const [typingText, setTypingText] = useState('');
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const typingStartedRef = useRef<boolean>(false);
@@ -161,9 +156,6 @@ export default function EnergyEfficientStartPage() {
       if (failTypingTimerRef.current) {
         clearTimeout(failTypingTimerRef.current);
       }
-      if (postSuccessTypingTimerRef.current) {
-        clearTimeout(postSuccessTypingTimerRef.current);
-      }
       if (cameraRef.current) {
         cameraRef.current.stop();
       }
@@ -227,43 +219,6 @@ export default function EnergyEfficientStartPage() {
   }, [showPostSuccess, userName]);
 
   /**
-   * Typing effect for post-success message
-   */
-  useEffect(() => {
-    if (!showPostSuccess) {
-      postSuccessTypingStartedRef.current = false;
-      setPostSuccessTypingText('');
-      if (postSuccessTypingTimerRef.current) {
-        clearTimeout(postSuccessTypingTimerRef.current);
-        postSuccessTypingTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (postSuccessTypingStartedRef.current) {
-      return;
-    }
-
-    postSuccessTypingStartedRef.current = true;
-    const fullText =
-      'The community link has been sent.\n\n' +
-      '✌️ show Victory to take photo.\n\n' +
-      'Just 2 more coffee to get your gift';
-
-    // Show all 3 lines at once (no typing effect)
-    postSuccessTypingTimerRef.current = setTimeout(() => {
-      setPostSuccessTypingText(fullText);
-    }, 300);
-
-    return () => {
-      if (postSuccessTypingTimerRef.current) {
-        clearTimeout(postSuccessTypingTimerRef.current);
-        postSuccessTypingTimerRef.current = null;
-      }
-    };
-  }, [showPostSuccess]);
-
-  /**
    * Restart page after completion (success or failure)
    */
   useEffect(() => {
@@ -314,7 +269,7 @@ export default function EnergyEfficientStartPage() {
   }, []);
 
   /**
-   * Typing effect for "Hi, I'm Avrou AI" text in face detection section
+   * Typing effect for "Hi, I'm Avro AI" text in face detection section
    */
   useEffect(() => {
     // Only start typing when face detection section is visible with look.mp4
@@ -334,7 +289,7 @@ export default function EnergyEfficientStartPage() {
     }
 
     typingStartedRef.current = true;
-    const fullText = "Hi, I'm Avrou";
+    const fullText = "Hi, I'm Avro";
     const words = fullText.split(' ');
     let currentWordIndex = 0;
     let currentCharIndex = 0;
@@ -878,7 +833,7 @@ export default function EnergyEfficientStartPage() {
               zIndex: 2,
             }}
           >
-            Join Avrou Now!
+            Join Avro Now!
           </div>
         </>
       ) : videoSource.endsWith('.gif') ? (
@@ -937,7 +892,7 @@ export default function EnergyEfficientStartPage() {
               }}
             />
           </div>
-          {/* Typing effect text "Hi, I'm Avrou AI" */}
+          {/* Typing effect text "Hi, I'm Avro AI" */}
           {videoSource === '/media/look.mp4' && status === 'checking' && (
             <div
               style={{
@@ -1029,7 +984,7 @@ export default function EnergyEfficientStartPage() {
               }}
             />
           </div>
-          {/* Typing effect text "Hi, I'm Avrou" under look.mp4 */}
+          {/* Typing effect text "Hi, I'm Avro" under look.mp4 */}
           {videoSource === '/media/look.mp4' && status === 'checking' && (
             <div
               style={{
@@ -1122,166 +1077,14 @@ export default function EnergyEfficientStartPage() {
             height: '100vh',
             backgroundColor: 'black',
             display: 'flex',
-            alignItems: 'flex-start',
+            alignItems: 'center',
             justifyContent: 'center',
-            padding: '48px 48px 0',
             zIndex: 10,
           }}
         >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '1200px',
-              display: 'flex',
-              gap: '24px',
-              alignItems: 'stretch',
-              justifyContent: 'center',
-            }}
-          >
-            {/* Top section: 2 horizontally stacked sections */}
-            <div
-              style={{
-                flex: 0.75,
-                minHeight: '340px',
-                padding: '22px',
-                borderRadius: '16px',
-                background: 'transparent',
-                backdropFilter: 'none',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'flex-start',
-                gap: '28px',
-              }}
-            >
-              {/* Line 1 with 1.mp4 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <video
-                  src="/media/1.mp4"
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
-                />
-                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
-                  The community link has been sent.
-                </span>
-              </div>
-
-              {/* Line 2 with 2.png */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <img
-                  src="/media/2.png"
-                  alt=""
-                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
-                />
-                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
-                  ✌️ show Victory to take photo.
-                </span>
-              </div>
-
-              {/* Line 3 with 3.png */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <img
-                  src="/media/3.png"
-                  alt=""
-                  style={{ width: '114px', height: '114px', objectFit: 'contain', flexShrink: 0 }}
-                />
-                <span style={{ color: '#fff', fontSize: '18px', fontWeight: 500 }}>
-                  Just 2 more coffee to get your gift
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                flex: 1.5,
-                minHeight: '380px',
-                padding: '18px',
-                borderRadius: '16px',
-                background: 'rgba(255,255,255,0.04)',
-                backdropFilter: 'blur(6px)',
-                position: 'relative',
-                overflow: 'hidden',
-              }}
-            >
-              {/* blue.gif with animated word sequence */}
-              <img
-                src="/media/blue.gif"
-                alt="Blue"
-                style={{
-                  width: '140%',
-                  height: '140%',
-                  objectFit: 'cover',
-                  objectPosition: 'center',
-                  transform: 'translate(-14%, -14%)',
-                }}
-              />
-              {/* Radial fade overlay to blend edges with black background */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  background: `
-                    radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.8) 85%, black 95%),
-                    linear-gradient(to top, black 0%, transparent 20%, transparent 80%, black 100%),
-                    linear-gradient(to bottom, black 0%, transparent 20%, transparent 80%, black 100%),
-                    linear-gradient(to left, black 0%, transparent 20%, transparent 80%, black 100%),
-                    linear-gradient(to right, black 0%, transparent 20%, transparent 80%, black 100%)
-                  `,
-                  pointerEvents: 'none',
-                }}
-              />
-              {/* Animated word sequence centered */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  color: '#fff',
-                  fontSize: '34px',
-                  fontWeight: 'bold',
-                  textAlign: 'center',
-                  zIndex: 2,
-                  pointerEvents: 'none',
-                  opacity: wordOpacity,
-                  transition: 'opacity 0.5s ease-in-out',
-                  padding: '0 12px',
-                }}
-              >
-                {(() => {
-                  const sequence = ['Hi', userName || 'Guest', 'welcome', 'reg.png'];
-                  const currentItem = sequence[currentWordIndex];
-
-                  if (currentItem === 'reg.png') {
-                    return (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <img
-                          src="/media/reg.png"
-                          alt="Registration"
-                          style={{
-                            width: '120px',
-                            height: 'auto',
-                            marginBottom: '12px',
-                          }}
-                        />
-                        <div style={{ fontSize: '14px', fontWeight: 'normal', color: '#ccc' }}>
-                          Scan dashboard
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return currentItem;
-                })()}
-              </div>
-            </div>
-          </div>
+          <span style={{ color: 'white', fontSize: '2rem', fontWeight: 500 }}>
+            خوش اومدی
+          </span>
         </div>
       )}
       
