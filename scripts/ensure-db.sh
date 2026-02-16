@@ -1,7 +1,7 @@
 #!/bin/sh
-# One-time fix when PostgreSQL volume already existed and skipped creating face_recognition DB.
+# Ensures the face_recognition database exists and schema is applied.
 # Run from project root: ./scripts/ensure-db.sh
-# Requires: docker compose (or docker-compose) and the db container running.
+# Requires: docker compose and the db container running.
 
 set -e
 cd "$(dirname "$0")/.."

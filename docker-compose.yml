@@ -2,6 +2,7 @@ services:
   db:
     image: ankane/pgvector:latest
     container_name: face_recognition_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -9,13 +10,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - db_backups:/backups
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres && psql -U postgres -d face_recognition -c 'SELECT 1' > /dev/null 2>&1",
+        ]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - face_recognition_network
 
@@ -51,26 +58,35 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
-      # Use BuildKit for faster builds
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: face_recognition_api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/face_recognition
+      DB_MAX_RETRIES: "10"
+      DB_RETRY_DELAY: "2"
     depends_on:
       db-init:
         condition: service_completed_successfully
     volumes:
       - ./api:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - face_recognition_network
 
   frontend:
     build: ./frontend
     container_name: face_recognition_frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
@@ -81,10 +97,52 @@ services:
     networks:
       - face_recognition_network
 
+  # Automated daily database backup
+  db-backup:
+    image: ankane/pgvector:latest
+    container_name: face_recognition_db_backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - db_backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "🗄️  Database backup service started"
+        echo "   Backups run every 6 hours, keeping the last 30 copies"
+        while true; do
+          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+          BACKUP_FILE="/backups/face_recognition_$${TIMESTAMP}.sql.gz"
+          echo "[$$TIMESTAMP] Starting backup..."
+          if pg_dump -U postgres -h db -d face_recognition | gzip > "$$BACKUP_FILE"; then
+            echo "[$$TIMESTAMP] ✓ Backup saved: $$BACKUP_FILE ($$(du -h "$$BACKUP_FILE" | cut -f1))"
+            # Keep only the last 30 backups (= ~7.5 days at 6h intervals)
+            ls -1t /backups/face_recognition_*.sql.gz 2>/dev/null | tail -n +31 | xargs -r rm -f
+            echo "[$$TIMESTAMP] ✓ Old backups cleaned up"
+          else
+            echo "[$$TIMESTAMP] ✗ Backup FAILED"
+          fi
+          # Sleep 6 hours between backups
+          sleep 21600
+        done
+    networks:
+      - face_recognition_network
+
 volumes:
   postgres_data:
+    # Named volume — survives `docker compose down`.
+    # WARNING: `docker compose down -v` or `docker volume rm` will DELETE all data.
+    # Use `docker volume inspect face-recognition-authentication-system_postgres_data`
+    # to find the host path if you need to back up the raw files.
+    name: face_recognition_postgres_data
+  db_backups:
+    # Stores periodic pg_dump backups for disaster recovery
+    name: face_recognition_db_backups
 
 networks:
   face_recognition_network:
     driver: bridge
-

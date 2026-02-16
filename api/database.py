@@ -5,18 +5,88 @@ This module handles:
 - Database connection setup with SQLAlchemy
 - User model with pgvector embeddings
 - Database initialization and table creation
+- Automatic database creation if missing (self-healing)
+- Retry logic with exponential backoff for resilience
 """
 
 from typing import List
+from urllib.parse import urlparse, urlunparse
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
+import logging
+import time
 import os
+
+logger = logging.getLogger(__name__)
 
 # Database URL from environment variable
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/face_recognition")
+
+# Retry configuration
+DB_MAX_RETRIES = int(os.getenv("DB_MAX_RETRIES", "10"))
+DB_RETRY_DELAY = float(os.getenv("DB_RETRY_DELAY", "2.0"))
+
+
+def _parse_admin_url(database_url: str) -> tuple:
+    """
+    Parse a database URL and return an admin URL (pointing to the default
+    'postgres' database) and the target database name.
+
+    This is used to connect to PostgreSQL *before* the target database exists,
+    so we can CREATE DATABASE if necessary.
+    """
+    parsed = urlparse(database_url)
+    db_name = parsed.path.lstrip("/")
+    admin_parsed = parsed._replace(path="/postgres")
+    admin_url = urlunparse(admin_parsed)
+    return admin_url, db_name
+
+
+def ensure_database_exists():
+    """
+    Ensure the target database exists, creating it if necessary.
+
+    Connects to the default 'postgres' database to check whether the target
+    database (parsed from DATABASE_URL) exists.  If not, it creates the
+    database and applies the pgvector extension.
+
+    Retries with exponential backoff when PostgreSQL is not yet reachable
+    (e.g. during container startup ordering).
+    """
+    admin_url, db_name = _parse_admin_url(DATABASE_URL)
+
+    for attempt in range(1, DB_MAX_RETRIES + 1):
+        try:
+            admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+            with admin_engine.connect() as conn:
+                result = conn.execute(
+                    text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                    {"name": db_name},
+                )
+                if not result.fetchone():
+                    conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+                    logger.info(f"✓ Created missing database '{db_name}'")
+                else:
+                    logger.debug(f"✓ Database '{db_name}' already exists")
+            admin_engine.dispose()
+            return
+        except Exception as e:
+            if attempt < DB_MAX_RETRIES:
+                wait = min(DB_RETRY_DELAY * (2 ** (attempt - 1)), 30)
+                logger.warning(
+                    f"⏳ Cannot reach PostgreSQL (attempt {attempt}/{DB_MAX_RETRIES}): {e}"
+                )
+                logger.info(f"   Retrying in {wait:.0f}s...")
+                time.sleep(wait)
+            else:
+                logger.error(
+                    f"✗ Failed to ensure database exists after {DB_MAX_RETRIES} attempts"
+                )
+                raise
+
 
 # Create SQLAlchemy engine
 # pool_pre_ping ensures connections are alive before using them
@@ -83,44 +153,48 @@ def get_db() -> Session:
 def init_db():
     """
     Initialize database with required extensions and tables.
-    
+
     This function:
-    1. Creates pgvector extension if not exists
-    2. Creates all tables defined in Base
-    3. Creates vector similarity index for fast search
-    
+    1. **Ensures the database exists** (creates it if missing — self-healing)
+    2. Creates pgvector extension if not exists
+    3. Creates all tables defined in Base
+    4. Creates vector similarity index for fast search
+
+    The ensure step connects to the default 'postgres' database and will
+    retry with exponential backoff, so the API can survive restarts where
+    PostgreSQL takes a moment to become ready.
+
     Called on application startup.
     """
+    # --- Self-healing: create the database if it was lost/dropped ---
+    ensure_database_exists()
+
     with engine.connect() as connection:
         # Enable pgvector extension
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         connection.commit()
-        
-        print("✓ pgvector extension enabled")
-    
+
+        logger.info("✓ pgvector extension enabled")
+
     # Create all tables
     Base.metadata.create_all(bind=engine)
-    print("✓ Database tables created")
-    
+    logger.info("✓ Database tables created")
+
     # Create or recreate index for vector similarity search
     # Using ivfflat index with cosine distance for efficient nearest neighbor search
-    # TODO: For production with 5000+ users, tune the 'lists' parameter
-    # Rule of thumb: lists = sqrt(total_rows), adjust based on performance testing
     with engine.connect() as connection:
-        # Drop index if exists (for development)
-        connection.execute(text("DROP INDEX IF EXISTS users_embedding_idx"))
-        
-        # Create IVFFlat index for fast similarity search
+        # Recreate IVFFlat index for fast similarity search
         # vector_cosine_ops: Uses cosine distance (1 - cosine similarity)
         # lists=100: Number of inverted lists (clusters)
+        connection.execute(text("DROP INDEX IF EXISTS users_embedding_idx"))
         connection.execute(text(
             "CREATE INDEX users_embedding_idx ON users "
             "USING ivfflat (embedding vector_cosine_ops) "
             "WITH (lists = 100)"
         ))
         connection.commit()
-        
-        print("✓ Vector similarity index created")
+
+        logger.info("✓ Vector similarity index created")
 
 
 def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0.45, limit: int = 1):
@@ -176,7 +250,6 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
     return matches
 
 
-# TODO: Implement connection pooling optimization for high-traffic scenarios
 # TODO: Add database migration support using Alembic for schema changes
 # TODO: Consider read replicas for scaling read-heavy workloads
 

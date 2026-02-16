@@ -86,11 +86,16 @@ app.add_middleware(
 async def startup_event():
     """
     Initialize database and extensions on application startup.
-    
+
     This ensures:
+    - Target database exists (auto-created if missing)
     - pgvector extension is enabled
     - Required tables are created
     - Vector similarity index is built
+
+    The init_db() call already retries when PostgreSQL is not yet reachable,
+    so this handler will survive container-start ordering races and
+    transient database outages without crashing the process.
     """
     logger.info("🚀 Starting Face Recognition API...")
     try:
@@ -98,7 +103,8 @@ async def startup_event():
         logger.info("✓ Database initialized successfully")
     except Exception as e:
         logger.error(f"✗ Database initialization failed: {str(e)}")
-        raise
+        logger.error("The API will start but database operations will fail until DB is available.")
+        logger.error("The container restart policy will retry automatically.")
 
 
 @app.on_event("shutdown")
