@@ -68,10 +68,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/face_recognition
       DB_MAX_RETRIES: "10"
       DB_RETRY_DELAY: "2"
-      # Kavenegar SMS notifications (set SMS_ENABLED=true and provide your API key to activate)
-      SMS_ENABLED: "${SMS_ENABLED:-false}"
-      KAVENEGAR_API_KEY: "${KAVENEGAR_API_KEY:-}"
-      KAVENEGAR_TEMPLATE: "${KAVENEGAR_TEMPLATE:-face-login}"
+      # Kavenegar SMS notifications
+      SMS_ENABLED: "true"
+      KAVENEGAR_API_KEY: "4A796970707061476C627347356B674750466173516161686739655456634A785342636173324A787A45493D"
+      KAVENEGAR_TEMPLATE: "audingo-verify"
     depends_on:
       db-init:
         condition: service_completed_successfully
