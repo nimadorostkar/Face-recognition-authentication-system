@@ -112,6 +112,7 @@ class User(Base):
     Attributes:
         id: Primary key, auto-incrementing
         name: Unique identifier for the user (e.g., username or full name)
+        mobile: User's mobile phone number
         embedding: 128D face embedding vector from dlib
                    TODO: Change to vector(512) when upgrading to ArcFace/InsightFace
         created_at: Timestamp of registration
@@ -120,6 +121,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
+    mobile = Column(String, nullable=True, index=True)
     
     # Store 128D embedding for dlib's face_recognition
     # TODO: Change dimension to 512 for ArcFace/InsightFace embeddings
@@ -128,7 +130,7 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
-        return f"<User(id={self.id}, name='{self.name}')>"
+        return f"<User(id={self.id}, name='{self.name}', mobile='{self.mobile}')>"
 
 
 def get_db() -> Session:

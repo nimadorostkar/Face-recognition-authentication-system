@@ -243,6 +243,7 @@ async def register_user(
         # Create new user with embedding
         new_user = User(
             name=request.name,
+            mobile=request.mobile,
             embedding=embedding
         )
         
@@ -250,11 +251,12 @@ async def register_user(
         db.commit()
         db.refresh(new_user)
         
-        logger.info(f"✓ User registered: {request.name} (ID: {new_user.id})")
+        logger.info(f"✓ User registered: {request.name} (ID: {new_user.id}, mobile: {request.mobile})")
         
         return RegisterResponse(
             status="registered",
             name=new_user.name,
+            mobile=new_user.mobile,
             user_id=new_user.id,
             message="User registered successfully"
         )
@@ -425,6 +427,7 @@ async def list_users(
         UserInfo(
             id=user.id,
             name=user.name,
+            mobile=user.mobile,
             created_at=user.created_at
         )
         for user in users

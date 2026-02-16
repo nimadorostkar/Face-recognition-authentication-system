@@ -40,6 +40,7 @@ export default function ProfilePage() {
         <div style={{ marginTop: '20px' }}>
           <p><strong>User ID:</strong> {user.userId}</p>
           <p><strong>Name:</strong> {user.name}</p>
+          {user.mobile && <p><strong>Mobile:</strong> {user.mobile}</p>}
           <p><strong>Status:</strong> Authenticated ✅</p>
         </div>
       </div>

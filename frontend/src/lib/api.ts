@@ -19,6 +19,7 @@ async function getErrorMessage(response: Response, fallback: string): Promise<st
 export interface RegisterResponse {
   status: string;
   name: string;
+  mobile: string | null;
   user_id: number;
   message: string;
 }
@@ -33,9 +34,9 @@ export interface RecognizeResponse {
 }
 
 /**
- * Register a new user with face image
+ * Register a new user with face image and mobile number
  */
-export async function registerUser(name: string, imageBase64: string): Promise<RegisterResponse> {
+export async function registerUser(name: string, imageBase64: string, mobile?: string): Promise<RegisterResponse> {
   const response = await fetch(`${API_BASE_URL}/register/`, {
     method: 'POST',
     headers: {
@@ -43,6 +44,7 @@ export async function registerUser(name: string, imageBase64: string): Promise<R
     },
     body: JSON.stringify({
       name,
+      mobile: mobile || null,
       image: imageBase64,
     }),
   });

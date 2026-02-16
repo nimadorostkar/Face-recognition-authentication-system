@@ -17,9 +17,11 @@ class RegisterRequest(BaseModel):
     
     Attributes:
         name: Unique identifier for the user
+        mobile: User's mobile phone number
         image: Base64-encoded image string or raw image data
     """
     name: str = Field(..., min_length=1, max_length=100, description="Unique user identifier")
+    mobile: Optional[str] = Field(None, max_length=20, description="User's mobile phone number")
     image: str = Field(..., description="Base64-encoded image containing a face")
     
     @validator('name')
@@ -28,6 +30,22 @@ class RegisterRequest(BaseModel):
         if not v.strip():
             raise ValueError("Name cannot be empty or whitespace only")
         return v.strip()
+    
+    @validator('mobile', pre=True, always=True)
+    def validate_mobile(cls, v):
+        """Validate and sanitize mobile number."""
+        if v is None or v == '':
+            return None
+        # Strip whitespace and dashes
+        cleaned = v.strip().replace(' ', '').replace('-', '')
+        if not cleaned:
+            return None
+        # Allow digits, optional leading +
+        if not cleaned.replace('+', '').isdigit():
+            raise ValueError("Mobile number must contain only digits and an optional leading +")
+        if len(cleaned) < 7 or len(cleaned) > 20:
+            raise ValueError("Mobile number must be between 7 and 20 characters")
+        return cleaned
     
     @validator('image')
     def validate_image(cls, v):
@@ -50,6 +68,7 @@ class RegisterRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "name": "John Doe",
+                "mobile": "+989123456789",
                 "image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             }
         }
@@ -62,11 +81,13 @@ class RegisterResponse(BaseModel):
     Attributes:
         status: Registration status message
         name: Registered user's name
+        mobile: Registered user's mobile number
         user_id: Database ID of the registered user
         message: Additional information
     """
     status: str = Field(..., description="Registration status")
     name: str = Field(..., description="Registered user name")
+    mobile: Optional[str] = Field(None, description="Registered user mobile number")
     user_id: int = Field(..., description="Database user ID")
     message: str = Field(..., description="Additional information")
     
@@ -75,6 +96,7 @@ class RegisterResponse(BaseModel):
             "example": {
                 "status": "registered",
                 "name": "John Doe",
+                "mobile": "+989123456789",
                 "user_id": 1,
                 "message": "User registered successfully"
             }
@@ -199,10 +221,12 @@ class UserInfo(BaseModel):
     Attributes:
         id: User database ID
         name: User name
+        mobile: User mobile number
         created_at: Registration timestamp
     """
     id: int
     name: str
+    mobile: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -211,6 +235,7 @@ class UserInfo(BaseModel):
             "example": {
                 "id": 1,
                 "name": "John Doe",
+                "mobile": "+989123456789",
                 "created_at": "2024-11-13T12:00:00"
             }
         }

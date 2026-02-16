@@ -13,6 +13,7 @@ export default function WebcamRecognition() {
   const [message, setMessage] = useState('Starting webcam...');
   const [showRegister, setShowRegister] = useState(false);
   const [registrationName, setRegistrationName] = useState('');
+  const [registrationMobile, setRegistrationMobile] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [livenessCheck, setLivenessCheck] = useState<LivenessResult | null>(null);
   const [isCheckingLiveness, setIsCheckingLiveness] = useState(false);
@@ -194,12 +195,12 @@ export default function WebcamRecognition() {
       setMessage('Registering...');
 
       // Register user
-      const result = await registerUser(registrationName.trim(), imageBase64);
+      const result = await registerUser(registrationName.trim(), imageBase64, registrationMobile.trim() || undefined);
 
       setMessage(`Registration successful! Welcome, ${result.name}!`);
 
       // Login and redirect
-      login(result.name, result.user_id);
+      login(result.name, result.user_id, result.mobile);
       setTimeout(() => {
         router.push('/profile');
       }, 1000);
@@ -247,7 +248,7 @@ export default function WebcamRecognition() {
           <h2>Register New User</h2>
           <p>We don&apos;t recognize your face. Would you like to register?</p>
           
-          <div style={{ marginTop: '15px' }}>
+          <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '320px' }}>
             <input
               type="text"
               placeholder="Enter your name"
@@ -258,8 +259,22 @@ export default function WebcamRecognition() {
                 fontSize: '16px',
                 border: '1px solid #ccc',
                 borderRadius: '4px',
-                marginRight: '10px',
-                width: '200px',
+                width: '100%',
+                boxSizing: 'border-box',
+              }}
+            />
+            <input
+              type="tel"
+              placeholder="Enter your mobile number"
+              value={registrationMobile}
+              onChange={(e) => setRegistrationMobile(e.target.value)}
+              style={{
+                padding: '10px',
+                fontSize: '16px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                width: '100%',
+                boxSizing: 'border-box',
               }}
             />
             <button
@@ -273,6 +288,7 @@ export default function WebcamRecognition() {
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
+                width: '100%',
               }}
             >
               Register
@@ -287,7 +303,7 @@ export default function WebcamRecognition() {
           <li>The system starts your webcam automatically</li>
           <li>Face recognition runs continuously</li>
           <li>If recognized, you&apos;ll be logged in instantly</li>
-          <li>If not recognized, you can register with your name</li>
+          <li>If not recognized, you can register with your name and mobile number</li>
         </ul>
       </div>
     </div>
