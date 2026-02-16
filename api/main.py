@@ -33,6 +33,7 @@ from face_utils import (
     InvalidImageError,
     FaceRecognitionError
 )
+from sms import send_login_sms
 
 # Configure logging
 logging.basicConfig(
@@ -362,6 +363,7 @@ async def recognize_face(
             return RecognizeResponse(
                 match=False,
                 name=None,
+                mobile=None,
                 distance=None,
                 user_id=None,
                 confidence=None,
@@ -380,6 +382,7 @@ async def recognize_face(
         return RecognizeResponse(
             match=True,
             name=matched_user.name,
+            mobile=matched_user.mobile,
             distance=round(distance, 3),
             user_id=matched_user.id,
             confidence=confidence,
@@ -398,6 +401,52 @@ async def recognize_face(
                 suggestion="Please try again or contact support"
             ).dict()
         )
+
+
+@app.post("/send-login-sms/{user_id}", tags=["Authentication"])
+async def send_login_notification(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Send a login notification SMS to a user after successful face authentication.
+
+    Args:
+        user_id: Database ID of the authenticated user
+        db: Database session
+
+    Returns:
+        Status of the SMS delivery
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if not user.mobile:
+        return {
+            "status": "skipped",
+            "reason": "no_mobile",
+            "message": f"User {user.name} has no mobile number registered"
+        }
+
+    success = send_login_sms(user.mobile, user.name)
+
+    if success:
+        logger.info(f"✓ Login SMS sent to {user.name} ({user.mobile})")
+        return {
+            "status": "sent",
+            "message": f"Login notification sent to {user.mobile}"
+        }
+    else:
+        return {
+            "status": "skipped",
+            "reason": "sms_disabled_or_failed",
+            "message": "SMS not sent (disabled or delivery failed)"
+        }
 
 
 @app.get("/users/", response_model=List[UserInfo], tags=["Management"])

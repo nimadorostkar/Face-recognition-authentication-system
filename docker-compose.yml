@@ -68,6 +68,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/face_recognition
       DB_MAX_RETRIES: "10"
       DB_RETRY_DELAY: "2"
+      # Kavenegar SMS notifications (set SMS_ENABLED=true and provide your API key to activate)
+      SMS_ENABLED: "${SMS_ENABLED:-false}"
+      KAVENEGAR_API_KEY: "${KAVENEGAR_API_KEY:-}"
+      KAVENEGAR_TEMPLATE: "${KAVENEGAR_TEMPLATE:-face-login}"
     depends_on:
       db-init:
         condition: service_completed_successfully

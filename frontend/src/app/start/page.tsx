@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useState } from 'react';
-import { recognizeFace } from '@/lib/api';
+import { recognizeFace, sendLoginSms } from '@/lib/api';
 import { MotionDetector, MotionResult } from '@/lib/motionDetector';
 import { EnergyEfficientStateMachine, SystemState } from '@/lib/stateMachine';
 import { EnergyEfficientCamera } from '@/lib/cameraManager';
@@ -554,9 +554,9 @@ export default function EnergyEfficientStartPage() {
         const result = await recognizeFace(imageBase64);
       console.log('[Recognition] Result:', result);
 
-        if (result.match && result.name) {
+        if (result.match && result.name && result.user_id) {
         // Success!
-        handleRecognitionSuccess(result.name);
+        handleRecognitionSuccess(result.name, result.user_id);
       } else {
         // Not recognized
         handleRecognitionFailure();
@@ -570,9 +570,12 @@ export default function EnergyEfficientStartPage() {
   /**
    * Handle successful recognition
    */
-  function handleRecognitionSuccess(name: string) {
-    console.log(`[Recognition] Success: ${name}`);
+  function handleRecognitionSuccess(name: string, userId: number) {
+    console.log(`[Recognition] Success: ${name} (ID: ${userId})`);
     console.log('[Video] Switching from look.mp4 to success.mp4');
+
+    // Fire-and-forget: send login SMS notification
+    sendLoginSms(userId);
     
     if (stateMachineRef.current) {
       stateMachineRef.current.onRecognitionSuccess(name);

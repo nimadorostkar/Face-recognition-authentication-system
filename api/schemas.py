@@ -144,12 +144,14 @@ class RecognizeResponse(BaseModel):
     Attributes:
         match: Whether a matching face was found
         name: Name of matched user (None if no match)
+        mobile: Mobile number of matched user (None if no match)
         distance: Similarity distance (lower is more similar)
         user_id: Database ID of matched user (None if no match)
         confidence: Human-readable confidence level
     """
     match: bool = Field(..., description="Whether a matching face was found")
     name: Optional[str] = Field(None, description="Name of matched user")
+    mobile: Optional[str] = Field(None, description="Mobile number of matched user")
     distance: Optional[float] = Field(None, description="Cosine distance (0.0 = identical, 2.0 = opposite)")
     user_id: Optional[int] = Field(None, description="Database user ID")
     confidence: Optional[str] = Field(None, description="Confidence level (high/medium/low)")
@@ -160,6 +162,7 @@ class RecognizeResponse(BaseModel):
             "example": {
                 "match": True,
                 "name": "John Doe",
+                "mobile": "+989123456789",
                 "distance": 0.33,
                 "user_id": 1,
                 "confidence": "high",

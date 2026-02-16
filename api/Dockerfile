@@ -49,7 +49,8 @@ RUN pip install --no-cache-dir \
     Pillow==10.1.0 \
     pydantic==2.5.0 \
     pydantic-settings==2.1.0 \
-    python-dotenv==1.0.0
+    python-dotenv==1.0.0 \
+    kavenegar==1.1.0
 
 # Final stage - smaller runtime image
 FROM python:3.10-slim

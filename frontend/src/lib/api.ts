@@ -27,6 +27,7 @@ export interface RegisterResponse {
 export interface RecognizeResponse {
   match: boolean;
   name: string | null;
+  mobile: string | null;
   distance: number | null;
   user_id: number | null;
   confidence: string | null;
@@ -107,5 +108,20 @@ export function captureFrame(video: HTMLVideoElement): string | null {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   
   return canvasToBase64(canvas);
+}
+
+/**
+ * Send login notification SMS to user after successful face authentication.
+ * Fire-and-forget: errors are logged but don't affect the login flow.
+ */
+export async function sendLoginSms(userId: number): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/send-login-sms/${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.warn('[SMS] Failed to send login notification:', error);
+  }
 }
 
