@@ -39,7 +39,11 @@ export default function EnergyEfficientStartPage() {
 
   // Post-success screen state
   const [showPostSuccess, setShowPostSuccess] = useState(false);
+  const [postSuccessPhase, setPostSuccessPhase] = useState<'go' | 'bg'>('go');
+  const [goGifOpacity, setGoGifOpacity] = useState(1);
   const postSuccessTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const postSuccessPhaseTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const goFadeTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // Animated word sequence state for blue.gif
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
@@ -55,6 +59,25 @@ export default function EnergyEfficientStartPage() {
   const [failTypingText, setFailTypingText] = useState('');
   const failTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const failTypingStartedRef = useRef<boolean>(false);
+
+  // Typing effect state for welcome text on bg.jpeg
+  const [welcomeTypingLine1, setWelcomeTypingLine1] = useState('');
+  const [welcomeTypingLine2, setWelcomeTypingLine2] = useState('');
+  const welcomeTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const welcomeTextRef = useRef<string>('');
+
+  const welcomeTexts = [
+    'حضور شما این فضا را خاص‌تر می‌کند.',
+    'با آمدنت، حال‌وهوای اینجا تغییر می‌کند.',
+    'حضورت یعنی کیفیت معنا پیدا می‌کند.',
+    'با حضور شما، اینجا گرم‌تر می‌شود.',
+    'تو ارزش یه حالِ خوب واقعی رو داری.',
+    'حضورت یعنی یک دلیل تازه برای لبخند.',
+    'با حضور تو، اینجا زنده‌تر می‌شود.',
+    'شما شایسته بهترین پذیرایی هستید.',
+    'حضورت یعنی یک حس خوبِ ماندگار.',
+    'تو لیاقت بهترین انتخاب‌ها رو داری.',
+  ];
   
   // Restart timer - reload page after completion
   const restartTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -141,6 +164,15 @@ export default function EnergyEfficientStartPage() {
       if (postSuccessTimerRef.current) {
         clearTimeout(postSuccessTimerRef.current);
       }
+      if (postSuccessPhaseTimerRef.current) {
+        clearTimeout(postSuccessPhaseTimerRef.current);
+      }
+      if (goFadeTimerRef.current) {
+        clearTimeout(goFadeTimerRef.current);
+      }
+      if (welcomeTypingTimerRef.current) {
+        clearTimeout(welcomeTypingTimerRef.current);
+      }
       if (wordSequenceTimerRef.current) {
         clearTimeout(wordSequenceTimerRef.current);
       }
@@ -219,6 +251,87 @@ export default function EnergyEfficientStartPage() {
   }, [showPostSuccess, userName]);
 
   /**
+   * Post-success phase transition: go.gif (2s with fade) → bg.jpeg (10s)
+   */
+  useEffect(() => {
+    if (!showPostSuccess) {
+      setPostSuccessPhase('go');
+      setGoGifOpacity(1);
+      return;
+    }
+
+    // Start fading out go.gif at 1.5s (500ms fade transition)
+    goFadeTimerRef.current = setTimeout(() => {
+      setGoGifOpacity(0);
+    }, 1500);
+
+    // Switch to bg.jpeg at 2s
+    postSuccessPhaseTimerRef.current = setTimeout(() => {
+      setPostSuccessPhase('bg');
+    }, 2000);
+
+    return () => {
+      if (goFadeTimerRef.current) {
+        clearTimeout(goFadeTimerRef.current);
+      }
+      if (postSuccessPhaseTimerRef.current) {
+        clearTimeout(postSuccessPhaseTimerRef.current);
+      }
+    };
+  }, [showPostSuccess]);
+
+  /**
+   * Typing effect for welcome text on bg.jpeg phase
+   */
+  useEffect(() => {
+    if (postSuccessPhase !== 'bg' || !showPostSuccess) {
+      setWelcomeTypingLine1('');
+      setWelcomeTypingLine2('');
+      return;
+    }
+
+    // Pick a random welcome text once
+    if (!welcomeTextRef.current) {
+      welcomeTextRef.current = welcomeTexts[Math.floor(Math.random() * welcomeTexts.length)];
+    }
+
+    const line1 = `سلام ${userName || 'کاربر'}، خوش اومدی`;
+    const line2 = welcomeTextRef.current;
+    let charIndex = 0;
+    let currentLine = 1;
+    const line1Chars = [...line1];
+    const line2Chars = [...line2];
+
+    function typeNext() {
+      if (currentLine === 1) {
+        if (charIndex < line1Chars.length) {
+          setWelcomeTypingLine1(line1Chars.slice(0, charIndex + 1).join(''));
+          charIndex++;
+          welcomeTypingTimerRef.current = setTimeout(typeNext, 80);
+        } else {
+          currentLine = 2;
+          charIndex = 0;
+          welcomeTypingTimerRef.current = setTimeout(typeNext, 400);
+        }
+      } else {
+        if (charIndex < line2Chars.length) {
+          setWelcomeTypingLine2(line2Chars.slice(0, charIndex + 1).join(''));
+          charIndex++;
+          welcomeTypingTimerRef.current = setTimeout(typeNext, 60);
+        }
+      }
+    }
+
+    welcomeTypingTimerRef.current = setTimeout(typeNext, 300);
+
+    return () => {
+      if (welcomeTypingTimerRef.current) {
+        clearTimeout(welcomeTypingTimerRef.current);
+      }
+    };
+  }, [postSuccessPhase, showPostSuccess, userName]);
+
+  /**
    * Restart page after completion (success or failure)
    */
   useEffect(() => {
@@ -230,9 +343,9 @@ export default function EnergyEfficientStartPage() {
     // For success: restart after 10 seconds when post-success screen is shown
     if (showPostSuccess) {
       restartTimerRef.current = setTimeout(() => {
-        console.log('[Restart] Success path complete - reloading page after 10 seconds...');
+        console.log('[Restart] Success path complete - reloading page after 12 seconds...');
         window.location.reload();
-      }, 10000); // 10 seconds for success
+      }, 12000); // 2s go.gif + 10s bg.jpeg
     }
     
     // For failure: restart after 6 seconds when QR code is shown
@@ -259,6 +372,10 @@ export default function EnergyEfficientStartPage() {
       @keyframes blink {
         0%, 50% { opacity: 1; }
         51%, 100% { opacity: 0; }
+      }
+      @keyframes menuScroll {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-50%); }
       }
     `;
     document.head.appendChild(style);
@@ -1069,7 +1186,7 @@ export default function EnergyEfficientStartPage() {
         </>
       )}
       
-      {/* Post-success screen */}
+      {/* Post-success screen: go.gif (2s with fade) then bg.jpeg (10s) */}
       {showPostSuccess && (
         <div
           style={{
@@ -1079,15 +1196,149 @@ export default function EnergyEfficientStartPage() {
             width: '100vw',
             height: '100vh',
             backgroundColor: 'black',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             zIndex: 10,
           }}
         >
-          <span style={{ color: 'white', fontSize: '2rem', fontWeight: 500 }}>
-            خوش اومدی
-          </span>
+          {postSuccessPhase === 'go' ? (
+            <img
+              src="/media/go.gif"
+              alt="Go"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                opacity: goGifOpacity,
+                transition: 'opacity 0.5s ease-in-out',
+              }}
+            />
+          ) : (
+            <>
+              <img
+                src="/media/bg.jpeg"
+                alt="Background"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                }}
+              />
+              {/* Edge and corner fade to black */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  background: `
+                    radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 65%, rgba(0,0,0,0.8) 85%, black 100%),
+                    linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.6) 100%),
+                    linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.6) 100%)
+                  `,
+                  pointerEvents: 'none',
+                }}
+              />
+              {/* Scrolling menu images at the bottom */}
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '30px',
+                  left: 0,
+                  width: '100%',
+                  overflow: 'hidden',
+                  pointerEvents: 'none',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '24px',
+                    animation: 'menuScroll 20s linear infinite',
+                    width: 'max-content',
+                  }}
+                >
+                  {[...Array(2)].map((_, setIndex) =>
+                    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                      <img
+                        key={`menu-${setIndex}-${num}`}
+                        src={`/media/menu/${num}.png`}
+                        alt={`Menu ${num}`}
+                        style={{
+                          height: '125px',
+                          width: 'auto',
+                          objectFit: 'contain',
+                          flexShrink: 0,
+                          borderRadius: '8px',
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+              {/* Welcome text with typing effect - top right */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100px',
+                  right: '120px',
+                  direction: 'rtl',
+                  textAlign: 'right',
+                  zIndex: 3,
+                  pointerEvents: 'none',
+                }}
+              >
+                <div
+                  style={{
+                    color: '#fff',
+                    fontSize: '28px',
+                    fontWeight: 600,
+                    minHeight: '40px',
+                    textShadow: '0 2px 8px rgba(0,0,0,0.7)',
+                  }}
+                >
+                  {welcomeTypingLine1}
+                  {welcomeTypingLine1 && !welcomeTypingLine2 && (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: '2px',
+                        height: '28px',
+                        backgroundColor: '#fff',
+                        marginRight: '3px',
+                        verticalAlign: 'middle',
+                        animation: 'blink 1s step-end infinite',
+                      }}
+                    />
+                  )}
+                </div>
+                <div
+                  style={{
+                    color: 'rgba(255,255,255,0.85)',
+                    fontSize: '20px',
+                    fontWeight: 400,
+                    marginTop: '12px',
+                    minHeight: '30px',
+                    textShadow: '0 2px 8px rgba(0,0,0,0.7)',
+                  }}
+                >
+                  {welcomeTypingLine2}
+                  {welcomeTypingLine2 && (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: '2px',
+                        height: '20px',
+                        backgroundColor: '#fff',
+                        marginRight: '3px',
+                        verticalAlign: 'middle',
+                        animation: 'blink 1s step-end infinite',
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
       
