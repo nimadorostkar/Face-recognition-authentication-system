@@ -127,6 +127,9 @@ class User(Base):
     # TODO: Change dimension to 512 for ArcFace/InsightFace embeddings
     embedding = Column(Vector(128), nullable=False)
     
+    visit_count = Column(Integer, default=0, nullable=False, server_default='0')
+    last_visit_at = Column(DateTime, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
@@ -182,6 +185,20 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     logger.info("✓ Database tables created")
 
+    # Migrate: add visit_count and last_visit_at if missing (for existing databases)
+    with engine.connect() as connection:
+        try:
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS visit_count INTEGER DEFAULT 0 NOT NULL"
+            ))
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_visit_at TIMESTAMP"
+            ))
+            connection.commit()
+            logger.info("✓ visit_count / last_visit_at columns ensured")
+        except Exception as e:
+            logger.debug(f"Column migration skipped: {e}")
+
     # Create or recreate index for vector similarity search
     # Using ivfflat index with cosine distance for efficient nearest neighbor search
     with engine.connect() as connection:
@@ -227,7 +244,8 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
     # Query using pgvector's cosine distance operator (<->)
     # ORDER BY ensures closest matches first
     query = text("""
-        SELECT id, name, embedding, created_at, embedding <-> :embedding AS distance
+        SELECT id, name, embedding, created_at, visit_count, last_visit_at,
+               embedding <-> :embedding AS distance
         FROM users
         WHERE embedding <-> :embedding < :threshold
         ORDER BY distance
@@ -245,11 +263,49 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
             id=row.id,
             name=row.name,
             embedding=row.embedding,
-            created_at=row.created_at
+            created_at=row.created_at,
+            visit_count=row.visit_count,
+            last_visit_at=row.last_visit_at,
         )
         matches.append((user, float(row.distance)))
     
     return matches
+
+
+VISIT_COOLDOWN_MINUTES = 30
+
+
+def increment_visit_if_eligible(db: Session, user_id: int) -> int:
+    """
+    Increment a user's visit_count if more than 30 minutes have passed
+    since their last counted visit. Returns the updated visit_count.
+    """
+    now = datetime.utcnow()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return 0
+
+    should_increment = (
+        user.last_visit_at is None
+        or (now - user.last_visit_at).total_seconds() > VISIT_COOLDOWN_MINUTES * 60
+    )
+
+    if should_increment:
+        user.visit_count = (user.visit_count or 0) + 1
+        user.last_visit_at = now
+        db.commit()
+        db.refresh(user)
+        logger.info(
+            f"✓ Visit counted for {user.name}: visit #{user.visit_count}"
+        )
+    else:
+        remaining = VISIT_COOLDOWN_MINUTES * 60 - (now - user.last_visit_at).total_seconds()
+        logger.info(
+            f"⏳ Visit not counted for {user.name} "
+            f"(within 30-min window, {remaining:.0f}s remaining)"
+        )
+
+    return user.visit_count
 
 
 # TODO: Add database migration support using Alembic for schema changes

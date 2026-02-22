@@ -19,7 +19,7 @@ import logging
 import os
 
 # Import local modules
-from database import init_db, get_db, User, find_similar_faces, engine
+from database import init_db, get_db, User, find_similar_faces, increment_visit_if_eligible, engine
 from schemas import (
     RegisterRequest, RegisterResponse,
     RecognizeRequest, RecognizeResponse,
@@ -374,9 +374,12 @@ async def recognize_face(
         matched_user, distance = matches[0]
         confidence = get_confidence_level(distance)
         
+        # Increment visit count (respects 30-min cooldown window)
+        visit_count = increment_visit_if_eligible(db, matched_user.id)
+        
         logger.info(
             f"✓ Face recognized: {matched_user.name} "
-            f"(distance: {distance:.3f}, confidence: {confidence})"
+            f"(distance: {distance:.3f}, confidence: {confidence}, visits: {visit_count})"
         )
         
         return RecognizeResponse(
@@ -386,6 +389,7 @@ async def recognize_face(
             distance=round(distance, 3),
             user_id=matched_user.id,
             confidence=confidence,
+            visit_count=visit_count,
             message="Face recognized successfully"
         )
     

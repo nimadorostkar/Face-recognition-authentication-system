@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT UNIQUE NOT NULL,
     mobile TEXT,
     embedding vector(128) NOT NULL,
+    visit_count INTEGER DEFAULT 0 NOT NULL,
+    last_visit_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

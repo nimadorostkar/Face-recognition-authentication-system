@@ -155,6 +155,7 @@ class RecognizeResponse(BaseModel):
     distance: Optional[float] = Field(None, description="Cosine distance (0.0 = identical, 2.0 = opposite)")
     user_id: Optional[int] = Field(None, description="Database user ID")
     confidence: Optional[str] = Field(None, description="Confidence level (high/medium/low)")
+    visit_count: Optional[int] = Field(None, description="Total visit count for the user")
     message: str = Field(..., description="Status message")
     
     class Config:
@@ -166,6 +167,7 @@ class RecognizeResponse(BaseModel):
                 "distance": 0.33,
                 "user_id": 1,
                 "confidence": "high",
+                "visit_count": 5,
                 "message": "Face recognized successfully"
             }
         }
@@ -230,6 +232,7 @@ class UserInfo(BaseModel):
     id: int
     name: str
     mobile: Optional[str] = None
+    visit_count: int = 0
     created_at: datetime
     
     class Config:
@@ -239,6 +242,7 @@ class UserInfo(BaseModel):
                 "id": 1,
                 "name": "John Doe",
                 "mobile": "+989123456789",
+                "visit_count": 5,
                 "created_at": "2024-11-13T12:00:00"
             }
         }

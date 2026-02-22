@@ -27,6 +27,7 @@ export default function EnergyEfficientStartPage() {
   const [showUI, setShowUI] = useState(false); // Black screen initially
   const [status, setStatus] = useState<'checking' | 'yes' | 'no'>('checking');
   const [userName, setUserName] = useState<string>('');
+  const [visitCount, setVisitCount] = useState<number>(0);
   const [fadeIn, setFadeIn] = useState(false);
   const [videoSource, setVideoSource] = useState('/media/look.mp4');
   const [showQR, setShowQR] = useState(false);
@@ -63,6 +64,7 @@ export default function EnergyEfficientStartPage() {
   // Typing effect state for welcome text on bg.jpeg
   const [welcomeTypingLine1, setWelcomeTypingLine1] = useState('');
   const [welcomeTypingLine2, setWelcomeTypingLine2] = useState('');
+  const [welcomeTypingLine3, setWelcomeTypingLine3] = useState('');
   const welcomeTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const welcomeTextRef = useRef<string>('');
 
@@ -287,6 +289,7 @@ export default function EnergyEfficientStartPage() {
     if (postSuccessPhase !== 'bg' || !showPostSuccess) {
       setWelcomeTypingLine1('');
       setWelcomeTypingLine2('');
+      setWelcomeTypingLine3('');
       return;
     }
 
@@ -297,10 +300,12 @@ export default function EnergyEfficientStartPage() {
 
     const line1 = `سلام ${userName || 'کاربر'}، خوش اومدی`;
     const line2 = welcomeTextRef.current;
+    const line3 = `وااای 😍 این ${visitCount}امین باره که پیش مایی! مرسی که کنار مایی 💛`;
     let charIndex = 0;
     let currentLine = 1;
     const line1Chars = [...line1];
     const line2Chars = [...line2];
+    const line3Chars = [...line3];
 
     function typeNext() {
       if (currentLine === 1) {
@@ -313,9 +318,19 @@ export default function EnergyEfficientStartPage() {
           charIndex = 0;
           welcomeTypingTimerRef.current = setTimeout(typeNext, 400);
         }
-      } else {
+      } else if (currentLine === 2) {
         if (charIndex < line2Chars.length) {
           setWelcomeTypingLine2(line2Chars.slice(0, charIndex + 1).join(''));
+          charIndex++;
+          welcomeTypingTimerRef.current = setTimeout(typeNext, 60);
+        } else {
+          currentLine = 3;
+          charIndex = 0;
+          welcomeTypingTimerRef.current = setTimeout(typeNext, 400);
+        }
+      } else {
+        if (charIndex < line3Chars.length) {
+          setWelcomeTypingLine3(line3Chars.slice(0, charIndex + 1).join(''));
           charIndex++;
           welcomeTypingTimerRef.current = setTimeout(typeNext, 60);
         }
@@ -329,7 +344,7 @@ export default function EnergyEfficientStartPage() {
         clearTimeout(welcomeTypingTimerRef.current);
       }
     };
-  }, [postSuccessPhase, showPostSuccess, userName]);
+  }, [postSuccessPhase, showPostSuccess, userName, visitCount]);
 
   /**
    * Restart page after completion (success or failure)
@@ -673,7 +688,7 @@ export default function EnergyEfficientStartPage() {
 
         if (result.match && result.name && result.user_id) {
         // Success!
-        handleRecognitionSuccess(result.name, result.user_id);
+        handleRecognitionSuccess(result.name, result.user_id, result.visit_count ?? 0);
       } else {
         // Not recognized
         handleRecognitionFailure();
@@ -687,9 +702,10 @@ export default function EnergyEfficientStartPage() {
   /**
    * Handle successful recognition
    */
-  function handleRecognitionSuccess(name: string, userId: number) {
-    console.log(`[Recognition] Success: ${name} (ID: ${userId})`);
+  function handleRecognitionSuccess(name: string, userId: number, userVisitCount: number) {
+    console.log(`[Recognition] Success: ${name} (ID: ${userId}, visits: ${userVisitCount})`);
     console.log('[Video] Switching from look.mp4 to success.mp4');
+    setVisitCount(userVisitCount);
 
     // Fire-and-forget: send login SMS notification
     sendLoginSms(userId);
@@ -1290,10 +1306,10 @@ export default function EnergyEfficientStartPage() {
                 <div
                   style={{
                     color: '#fff',
-                    fontSize: '28px',
+                    fontSize: '84px',
                     fontWeight: 600,
-                    minHeight: '40px',
-                    textShadow: '0 2px 8px rgba(0,0,0,0.7)',
+                    minHeight: '100px',
+                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
                   }}
                 >
                   {welcomeTypingLine1}
@@ -1301,10 +1317,10 @@ export default function EnergyEfficientStartPage() {
                     <span
                       style={{
                         display: 'inline-block',
-                        width: '2px',
-                        height: '28px',
+                        width: '4px',
+                        height: '84px',
                         backgroundColor: '#fff',
-                        marginRight: '3px',
+                        marginRight: '5px',
                         verticalAlign: 'middle',
                         animation: 'blink 1s step-end infinite',
                       }}
@@ -1314,22 +1330,47 @@ export default function EnergyEfficientStartPage() {
                 <div
                   style={{
                     color: 'rgba(255,255,255,0.85)',
-                    fontSize: '20px',
+                    fontSize: '60px',
                     fontWeight: 400,
-                    marginTop: '12px',
-                    minHeight: '30px',
-                    textShadow: '0 2px 8px rgba(0,0,0,0.7)',
+                    marginTop: '24px',
+                    minHeight: '75px',
+                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
                   }}
                 >
                   {welcomeTypingLine2}
-                  {welcomeTypingLine2 && (
+                  {welcomeTypingLine2 && !welcomeTypingLine3 && (
                     <span
                       style={{
                         display: 'inline-block',
-                        width: '2px',
-                        height: '20px',
+                        width: '4px',
+                        height: '60px',
                         backgroundColor: '#fff',
-                        marginRight: '3px',
+                        marginRight: '5px',
+                        verticalAlign: 'middle',
+                        animation: 'blink 1s step-end infinite',
+                      }}
+                    />
+                  )}
+                </div>
+                <div
+                  style={{
+                    color: 'rgba(255,255,255,0.85)',
+                    fontSize: '54px',
+                    fontWeight: 400,
+                    marginTop: '80px',
+                    minHeight: '70px',
+                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
+                  }}
+                >
+                  {welcomeTypingLine3}
+                  {welcomeTypingLine3 && (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: '4px',
+                        height: '54px',
+                        backgroundColor: '#fff',
+                        marginRight: '5px',
                         verticalAlign: 'middle',
                         animation: 'blink 1s step-end infinite',
                       }}

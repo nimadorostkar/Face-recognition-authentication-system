@@ -31,6 +31,7 @@ export interface RecognizeResponse {
   distance: number | null;
   user_id: number | null;
   confidence: string | null;
+  visit_count: number | null;
   message: string;
 }
 
