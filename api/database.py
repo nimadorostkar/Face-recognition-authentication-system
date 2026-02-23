@@ -1,12 +1,13 @@
 """
 Database configuration and models for face recognition system.
 
-This module handles:
-- Database connection setup with SQLAlchemy
-- User model with pgvector embeddings
-- Database initialization and table creation
+Features:
+- SQLAlchemy connection pooling with health checks
+- pgvector embeddings for face similarity search
 - Automatic database creation if missing (self-healing)
-- Retry logic with exponential backoff for resilience
+- Runtime auto-recovery: if the database disappears while the API is
+  running, the next request will recreate it and rebuild the schema
+- Retry logic with exponential backoff
 """
 
 from typing import List
@@ -19,25 +20,52 @@ from datetime import datetime
 import logging
 import time
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
-# Database URL from environment variable
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/face_recognition")
-
-# Retry configuration
 DB_MAX_RETRIES = int(os.getenv("DB_MAX_RETRIES", "10"))
 DB_RETRY_DELAY = float(os.getenv("DB_RETRY_DELAY", "2.0"))
+RECOVERY_COOLDOWN = int(os.getenv("DB_RECOVERY_COOLDOWN", "15"))
 
+# ── Engine lifecycle ──────────────────────────────────────────────────
+_engine_lock = threading.Lock()
+_last_recovery_time: float = 0.0
+
+engine = None
+SessionLocal = None
+
+Base = declarative_base()
+
+
+def _build_engine():
+    """(Re)create the SQLAlchemy engine and session factory."""
+    global engine, SessionLocal
+    old = engine
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=300,
+        echo=False,
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    if old is not None:
+        try:
+            old.dispose()
+        except Exception:
+            pass
+
+
+_build_engine()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
 
 def _parse_admin_url(database_url: str) -> tuple:
-    """
-    Parse a database URL and return an admin URL (pointing to the default
-    'postgres' database) and the target database name.
-
-    This is used to connect to PostgreSQL *before* the target database exists,
-    so we can CREATE DATABASE if necessary.
-    """
+    """Return an admin URL (targeting the 'postgres' db) and the target db name."""
     parsed = urlparse(database_url)
     db_name = parsed.path.lstrip("/")
     admin_parsed = parsed._replace(path="/postgres")
@@ -45,16 +73,20 @@ def _parse_admin_url(database_url: str) -> tuple:
     return admin_url, db_name
 
 
+def _is_database_missing_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "does not exist" in msg and "database" in msg
+
+
+# ── Database creation ─────────────────────────────────────────────────
+
 def ensure_database_exists():
     """
     Ensure the target database exists, creating it if necessary.
 
     Connects to the default 'postgres' database to check whether the target
-    database (parsed from DATABASE_URL) exists.  If not, it creates the
-    database and applies the pgvector extension.
-
-    Retries with exponential backoff when PostgreSQL is not yet reachable
-    (e.g. during container startup ordering).
+    database exists.  If not, it creates the database.
+    Retries with exponential backoff when PostgreSQL is not yet reachable.
     """
     admin_url, db_name = _parse_admin_url(DATABASE_URL)
 
@@ -88,104 +120,35 @@ def ensure_database_exists():
                 raise
 
 
-# Create SQLAlchemy engine
-# pool_pre_ping ensures connections are alive before using them
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    echo=False  # Set to True for SQL query logging during development
-)
-
-# Session factory for creating database sessions
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Base class for declarative models
-Base = declarative_base()
-
+# ── Model ─────────────────────────────────────────────────────────────
 
 class User(Base):
-    """
-    User model for storing face recognition data.
-    
-    Attributes:
-        id: Primary key, auto-incrementing
-        name: Unique identifier for the user (e.g., username or full name)
-        mobile: User's mobile phone number
-        embedding: 128D face embedding vector from dlib
-                   TODO: Change to vector(512) when upgrading to ArcFace/InsightFace
-        created_at: Timestamp of registration
-    """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
     mobile = Column(String, nullable=True, index=True)
-    
-    # Store 128D embedding for dlib's face_recognition
-    # TODO: Change dimension to 512 for ArcFace/InsightFace embeddings
     embedding = Column(Vector(128), nullable=False)
-    
     visit_count = Column(Integer, default=0, nullable=False, server_default='0')
     last_visit_at = Column(DateTime, nullable=True)
-    
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def __repr__(self):
         return f"<User(id={self.id}, name='{self.name}', mobile='{self.mobile}')>"
 
 
-def get_db() -> Session:
-    """
-    Dependency function to get database session.
-    
-    Yields:
-        Database session that automatically closes after use
-    
-    Usage:
-        @app.get("/endpoint")
-        def endpoint(db: Session = Depends(get_db)):
-            # Use db here
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# ── Schema application ────────────────────────────────────────────────
 
-
-def init_db():
-    """
-    Initialize database with required extensions and tables.
-
-    This function:
-    1. **Ensures the database exists** (creates it if missing — self-healing)
-    2. Creates pgvector extension if not exists
-    3. Creates all tables defined in Base
-    4. Creates vector similarity index for fast search
-
-    The ensure step connects to the default 'postgres' database and will
-    retry with exponential backoff, so the API can survive restarts where
-    PostgreSQL takes a moment to become ready.
-
-    Called on application startup.
-    """
-    # --- Self-healing: create the database if it was lost/dropped ---
-    ensure_database_exists()
-
+def _apply_schema():
+    """Create extensions, tables, columns, and indexes on the current engine."""
     with engine.connect() as connection:
-        # Enable pgvector extension
         connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         connection.commit()
-
         logger.info("✓ pgvector extension enabled")
 
-    # Create all tables
     Base.metadata.create_all(bind=engine)
     logger.info("✓ Database tables created")
 
-    # Migrate: add visit_count and last_visit_at if missing (for existing databases)
     with engine.connect() as connection:
         try:
             connection.execute(text(
@@ -199,12 +162,7 @@ def init_db():
         except Exception as e:
             logger.debug(f"Column migration skipped: {e}")
 
-    # Create or recreate index for vector similarity search
-    # Using ivfflat index with cosine distance for efficient nearest neighbor search
     with engine.connect() as connection:
-        # Recreate IVFFlat index for fast similarity search
-        # vector_cosine_ops: Uses cosine distance (1 - cosine similarity)
-        # lists=100: Number of inverted lists (clusters)
         connection.execute(text("DROP INDEX IF EXISTS users_embedding_idx"))
         connection.execute(text(
             "CREATE INDEX users_embedding_idx ON users "
@@ -212,37 +170,101 @@ def init_db():
             "WITH (lists = 100)"
         ))
         connection.commit()
-
         logger.info("✓ Vector similarity index created")
 
 
+# ── Auto-recovery ─────────────────────────────────────────────────────
+
+def attempt_recovery() -> bool:
+    """
+    Thread-safe database recovery with cooldown.
+
+    When the database disappears at runtime (e.g. dropped externally),
+    this function recreates it, rebuilds the engine, and reapplies the
+    schema.  A cooldown prevents stampeding when many requests fail at
+    once.
+    """
+    global _last_recovery_time
+    now = time.time()
+    if now - _last_recovery_time < RECOVERY_COOLDOWN:
+        return False
+
+    with _engine_lock:
+        if time.time() - _last_recovery_time < RECOVERY_COOLDOWN:
+            return False
+        _last_recovery_time = time.time()
+
+        logger.warning("🔄 Attempting automatic database recovery...")
+        try:
+            ensure_database_exists()
+            _build_engine()
+            _apply_schema()
+            logger.info("✓ Database auto-recovered successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Auto-recovery failed: {e}")
+            return False
+
+
+# ── Session management ────────────────────────────────────────────────
+
+def get_db() -> Session:
+    """
+    FastAPI dependency that yields a database session.
+
+    On the first request after the database disappears, it automatically
+    triggers recovery (recreate DB + schema) and retries the connection.
+    If a database error occurs *during* a request, recovery is triggered
+    for the benefit of subsequent requests (the current request still
+    fails with 500).
+    """
+    for attempt in range(2):
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+        except Exception as e:
+            db.close()
+            if attempt == 0 and _is_database_missing_error(e):
+                attempt_recovery()
+                continue
+            raise
+        try:
+            yield db
+        except Exception as e:
+            if _is_database_missing_error(e):
+                attempt_recovery()
+            raise
+        finally:
+            db.close()
+        return
+
+
+# ── Initialization ────────────────────────────────────────────────────
+
+def init_db():
+    """
+    Full database initialization on application startup.
+
+    1. Ensures the database exists (creates if missing)
+    2. Rebuilds the engine so connections point to the verified database
+    3. Applies schema (extensions, tables, indexes)
+    """
+    ensure_database_exists()
+    _build_engine()
+    _apply_schema()
+
+
+# ── Query helpers ─────────────────────────────────────────────────────
+
 def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0.45, limit: int = 1):
     """
-    Find similar faces using pgvector similarity search.
-    
-    Args:
-        db: Database session
-        embedding: Query embedding vector (128D)
-        threshold: Maximum distance threshold for a match (default: 0.45)
-        limit: Maximum number of results to return
-    
-    Returns:
-        List of tuples: [(User, distance), ...]
-        Returns empty list if no matches found within threshold
-    
-    Note:
-        Uses cosine distance (<->) operator from pgvector.
-        Lower distance = more similar faces.
-        Distance of 0.0 = identical, 2.0 = opposite
-    
-    TODO: Implement memory caching for frequently accessed embeddings
-    TODO: Consider approximate nearest neighbor (ANN) algorithms for >100k users
+    Find similar faces using pgvector cosine-distance search.
+
+    Returns list of (User, distance) tuples.  Empty list if no matches
+    within threshold.
     """
-    # Convert embedding list to string format for pgvector
     embedding_str = "[" + ",".join(map(str, embedding)) + "]"
-    
-    # Query using pgvector's cosine distance operator (<->)
-    # ORDER BY ensures closest matches first
+
     query = text("""
         SELECT id, name, embedding, created_at, visit_count, last_visit_at,
                embedding <-> :embedding AS distance
@@ -251,12 +273,12 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
         ORDER BY distance
         LIMIT :limit
     """)
-    
+
     result = db.execute(
         query,
         {"embedding": embedding_str, "threshold": threshold, "limit": limit}
     )
-    
+
     matches = []
     for row in result:
         user = User(
@@ -268,7 +290,7 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
             last_visit_at=row.last_visit_at,
         )
         matches.append((user, float(row.distance)))
-    
+
     return matches
 
 
@@ -278,7 +300,7 @@ VISIT_COOLDOWN_MINUTES = 30
 def increment_visit_if_eligible(db: Session, user_id: int) -> int:
     """
     Increment a user's visit_count if more than 30 minutes have passed
-    since their last counted visit. Returns the updated visit_count.
+    since their last counted visit.  Returns the updated visit_count.
     """
     now = datetime.utcnow()
     user = db.query(User).filter(User.id == user_id).first()
@@ -306,8 +328,3 @@ def increment_visit_if_eligible(db: Session, user_id: int) -> int:
         )
 
     return user.visit_count
-
-
-# TODO: Add database migration support using Alembic for schema changes
-# TODO: Consider read replicas for scaling read-heavy workloads
-

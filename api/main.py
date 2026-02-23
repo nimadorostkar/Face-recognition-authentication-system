@@ -16,10 +16,11 @@ from sqlalchemy import text
 from datetime import datetime
 from typing import List
 import logging
+import asyncio
 import os
 
-# Import local modules
-from database import init_db, get_db, User, find_similar_faces, increment_visit_if_eligible, engine
+import database
+from database import init_db, get_db, User, find_similar_faces, increment_visit_if_eligible
 from schemas import (
     RegisterRequest, RegisterResponse,
     RecognizeRequest, RecognizeResponse,
@@ -83,21 +84,30 @@ app.add_middleware(
 
 
 
+async def _db_health_monitor():
+    """
+    Background task that checks database health every 60 seconds.
+    If the database is missing, triggers automatic recovery so the
+    system self-heals even when no user requests are coming in.
+    """
+    await asyncio.sleep(30)
+    while True:
+        try:
+            eng = database.engine
+            if eng:
+                with eng.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+        except Exception as e:
+            if "does not exist" in str(e).lower():
+                logger.warning("🔄 Background monitor: database missing, triggering recovery...")
+                database.attempt_recovery()
+            else:
+                logger.warning(f"⚠️ Background health check error: {e}")
+        await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def startup_event():
-    """
-    Initialize database and extensions on application startup.
-
-    This ensures:
-    - Target database exists (auto-created if missing)
-    - pgvector extension is enabled
-    - Required tables are created
-    - Vector similarity index is built
-
-    The init_db() call already retries when PostgreSQL is not yet reachable,
-    so this handler will survive container-start ordering races and
-    transient database outages without crashing the process.
-    """
     logger.info("🚀 Starting Face Recognition API...")
     try:
         init_db()
@@ -106,13 +116,14 @@ async def startup_event():
         logger.error(f"✗ Database initialization failed: {str(e)}")
         logger.error("The API will start but database operations will fail until DB is available.")
         logger.error("The container restart policy will retry automatically.")
+    asyncio.create_task(_db_health_monitor())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on application shutdown."""
     logger.info("👋 Shutting down Face Recognition API...")
-    engine.dispose()
+    if database.engine:
+        database.engine.dispose()
 
 
 @app.get("/", tags=["Health"])
