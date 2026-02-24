@@ -63,7 +63,7 @@ services:
     container_name: face_recognition_api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/face_recognition
       DB_MAX_RETRIES: "10"

@@ -88,6 +88,11 @@ export default function EnergyEfficientStartPage() {
   const motionCounterRef = useRef<number>(0);
   const MOTION_REQUIRED_FRAMES = 3; // Require 3 consecutive frames with motion
 
+  // Track UI state via ref (immune to stale closures in setInterval)
+  const showUIRef = useRef<boolean>(false);
+  // Max recognition timeout - fires after maxRecognitionTime to show failure
+  const maxRecognitionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Debug state
   const [debugInfo, setDebugInfo] = useState({
     fps: 0,
@@ -180,6 +185,9 @@ export default function EnergyEfficientStartPage() {
       }
       if (restartTimerRef.current) {
         clearTimeout(restartTimerRef.current);
+      }
+      if (maxRecognitionTimeoutRef.current) {
+        clearTimeout(maxRecognitionTimeoutRef.current);
       }
       if (faceDetectionDelayRef.current) {
         clearTimeout(faceDetectionDelayRef.current);
@@ -634,7 +642,8 @@ export default function EnergyEfficientStartPage() {
       // Only trigger state change if we have enough consecutive motion frames
       if (motionCounterRef.current >= MOTION_REQUIRED_FRAMES) {
         // Show UI when motion is confirmed with smooth fade transition
-        if (!showUI) {
+        if (!showUIRef.current) {
+          showUIRef.current = true;
           console.log('[UI] Significant motion confirmed - transitioning from large ai.gif to smaller ai.gif in face detection section');
           
           // Step 1: Fade out ai.gif (faster fade)
@@ -642,9 +651,8 @@ export default function EnergyEfficientStartPage() {
           
           // Step 2: After fade out, show ai.gif in face detection section and show UI
           setTimeout(() => {
-            setShowAiGif(false); // Hide large ai.gif completely
+            setShowAiGif(false);
             setShowUI(true);
-            // look.mp4 is shown via <video> and uses the generic fadeIn opacity
             setFadeIn(true);
             console.log('[UI] Transition complete - look.mp4 visible in face detection section');
             
@@ -654,10 +662,23 @@ export default function EnergyEfficientStartPage() {
             }
             faceDetectionDelayRef.current = setTimeout(() => {
               console.log('[UI] Starting face recognition after short delay');
-              stateMachine.onMotionDetected(); // Now start face recognition
+              stateMachine.onMotionDetected();
               faceDetectionDelayRef.current = null;
-            }, 2000); // 2 seconds delay
-          }, 500); // 500ms fade duration (faster fade)
+
+              // Start max recognition timeout - only show failure after full timeout
+              if (maxRecognitionTimeoutRef.current) {
+                clearTimeout(maxRecognitionTimeoutRef.current);
+              }
+              const maxTime = stateMachineRef.current?.getConfig().maxRecognitionTime ?? 30000;
+              maxRecognitionTimeoutRef.current = setTimeout(() => {
+                const state = stateMachineRef.current?.getState();
+                if (!showQRRef.current && state !== SystemState.SUCCESS && state !== SystemState.FAILED) {
+                  console.log('[Recognition] Max recognition time reached - showing failure');
+                  handleRecognitionFailure();
+                }
+              }, maxTime);
+            }, 2000);
+          }, 500);
         }
       }
     } else {
@@ -674,28 +695,24 @@ export default function EnergyEfficientStartPage() {
    * Perform face recognition
    */
   async function performFaceRecognition(camera: EnergyEfficientCamera) {
+    if (stateMachineRef.current?.getState() !== SystemState.FACE_RECOGNITION_ACTIVE) {
+      return;
+    }
+
     try {
-      console.log('[Recognition] Attempting face recognition...');
-      
       const imageBase64 = camera.captureFrameAsBase64();
       if (!imageBase64) {
-        console.warn('[Recognition] Failed to capture frame');
         return;
       }
 
-        const result = await recognizeFace(imageBase64);
-      console.log('[Recognition] Result:', result);
+      const result = await recognizeFace(imageBase64);
 
-        if (result.match && result.name && result.user_id) {
-        // Success!
+      if (result.match && result.name && result.user_id) {
         handleRecognitionSuccess(result.name, result.user_id, result.visit_count ?? 0);
-      } else {
-        // Not recognized
-        handleRecognitionFailure();
       }
-    } catch (error: any) {
-      console.error('[Recognition] Error:', error);
-      handleRecognitionFailure();
+      // No match: keep trying until maxRecognitionTimeout fires
+    } catch {
+      // API error (no face detected, network, etc.) - silently retry
     }
   }
 
@@ -712,6 +729,12 @@ export default function EnergyEfficientStartPage() {
     
     if (stateMachineRef.current) {
       stateMachineRef.current.onRecognitionSuccess(name);
+    }
+
+    // Clear recognition timeout since we succeeded
+    if (maxRecognitionTimeoutRef.current) {
+      clearTimeout(maxRecognitionTimeoutRef.current);
+      maxRecognitionTimeoutRef.current = null;
     }
 
     // Clear timers
@@ -752,8 +775,14 @@ export default function EnergyEfficientStartPage() {
         postSuccessTimerRef.current = setTimeout(() => {
           console.log('[PostSuccess] Showing post-success screen');
           setShowPostSuccess(true);
-          setFadeIn(false); // Hide success video
-        }, 2000); // 2 seconds after success video starts
+          setFadeIn(false);
+        }, 2000);
+
+        // Restart page after post-success screen completes
+        restartTimerRef.current = setTimeout(() => {
+          console.log('[System] Restarting after success flow...');
+          window.location.reload();
+        }, 25000);
       }, 100);
           }, 300);
 
@@ -819,6 +848,12 @@ export default function EnergyEfficientStartPage() {
                 }
               }, 500);
             }, 3000);
+
+      // Restart page after QR screen to reset for next user
+      restartTimerRef.current = setTimeout(() => {
+        console.log('[System] Restarting after failure flow...');
+        window.location.reload();
+      }, 20000);
           }, 300);
 
     // Pause camera (energy saving)
