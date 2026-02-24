@@ -16,9 +16,19 @@ export default function Home() {
     }
   }, [isAuthenticated, router]);
 
-  // Don't show anything if redirecting
   if (isAuthenticated) {
-    return <div style={{ padding: '20px' }}>Redirecting...</div>;
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#7a7a9a',
+        fontSize: '16px',
+      }}>
+        در حال انتقال...
+      </div>
+    );
   }
 
   return <WebcamRecognition />;

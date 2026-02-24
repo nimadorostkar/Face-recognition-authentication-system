@@ -41,11 +41,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="fa" dir="rtl">
       <head>
         <style dangerouslySetInnerHTML={{ __html: fontFaceStyles }} />
       </head>
-      <body style={{ margin: 0, padding: 0, fontFamily: "'IRANYekan', system-ui, -apple-system, sans-serif" }}>
+      <body style={{
+        margin: 0,
+        padding: 0,
+        fontFamily: "'IRANYekan', system-ui, -apple-system, sans-serif",
+        background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)',
+        color: '#e0e0e0',
+        minHeight: '100vh',
+      }}>
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

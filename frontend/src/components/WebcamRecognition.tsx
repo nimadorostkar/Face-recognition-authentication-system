@@ -10,7 +10,7 @@ export default function WebcamRecognition() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [message, setMessage] = useState('Starting webcam...');
+  const [message, setMessage] = useState('در حال راه‌اندازی دوربین...');
   const [showRegister, setShowRegister] = useState(false);
   const [registrationName, setRegistrationName] = useState('');
   const [registrationMobile, setRegistrationMobile] = useState('');
@@ -24,7 +24,6 @@ export default function WebcamRecognition() {
   const livenessDetectorRef = useRef<SimpleLivenessDetector | null>(null);
   const livenessIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Start webcam
   useEffect(() => {
     async function startWebcam() {
       try {
@@ -39,20 +38,17 @@ export default function WebcamRecognition() {
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
           setStream(mediaStream);
-          setMessage('Webcam ready. Starting liveness check...');
-          
-          // Initialize liveness detector
+          setMessage('دوربین آماده است. شروع بررسی...');
           livenessDetectorRef.current = new SimpleLivenessDetector();
         }
       } catch (error) {
         console.error('Error accessing webcam:', error);
-        setMessage('Error: Could not access webcam. Please grant permission.');
+        setMessage('خطا: دسترسی به دوربین امکان‌پذیر نیست. لطفاً اجازه دسترسی بدهید.');
       }
     }
 
     startWebcam();
 
-    // Cleanup
     return () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -66,7 +62,6 @@ export default function WebcamRecognition() {
     };
   }, []);
 
-  // Start liveness check once webcam is ready
   useEffect(() => {
     if (!stream || !videoRef.current || isCheckingLiveness) return;
 
@@ -79,7 +74,7 @@ export default function WebcamRecognition() {
     };
 
     function startLivenessCheck() {
-      setMessage('Starting face recognition...');
+      setMessage('شروع تشخیص چهره...');
 
       livenessIntervalRef.current = setInterval(() => {
         if (!videoRef.current || !livenessDetectorRef.current) return;
@@ -95,23 +90,19 @@ export default function WebcamRecognition() {
         setLivenessCheck(result);
 
         if (result.isLive) {
-          // Simple check passed!
-          setMessage('✅ Ready! Starting face recognition...');
-          
+          setMessage('آماده! شروع تشخیص چهره...');
           if (livenessIntervalRef.current) {
             clearInterval(livenessIntervalRef.current);
           }
-
-          // Start face recognition
           setTimeout(() => {
             startContinuousRecognition();
           }, 500);
         } else if (progress >= 100 && !result.isLive) {
-          setMessage('Please move slightly and try again...');
+          setMessage('لطفاً کمی حرکت کنید و دوباره تلاش کنید...');
           livenessDetectorRef.current.reset();
           setLivenessProgress(0);
         }
-      }, 200); // Check every 200ms
+      }, 200);
     }
 
     return () => {
@@ -121,12 +112,10 @@ export default function WebcamRecognition() {
     };
   }, [stream, isCheckingLiveness]);
 
-  // Function to start continuous face recognition after liveness check
   function startContinuousRecognition() {
     setIsRecognizing(true);
-    setMessage('Looking for faces...');
+    setMessage('در حال جستجوی چهره...');
 
-    // Recognize every 2 seconds
     recognitionIntervalRef.current = setInterval(async () => {
       if (!videoRef.current) return;
 
@@ -137,79 +126,65 @@ export default function WebcamRecognition() {
         const result = await recognizeFace(imageBase64);
 
         if (result.match && result.name && result.user_id) {
-          // Face recognized - auto login!
-          setMessage(`Welcome back, ${result.name}! Logging in...`);
-          
-          // Stop recognition
+          setMessage(`خوش آمدید، ${result.name}! در حال ورود...`);
           if (recognitionIntervalRef.current) {
             clearInterval(recognitionIntervalRef.current);
           }
-
-          // Login and redirect
           login(result.name, result.user_id);
           setTimeout(() => {
             router.push('/profile');
           }, 1000);
         } else {
-          // Not recognized
-          setMessage('Face not recognized. Would you like to register?');
+          setMessage('چهره شناسایی نشد. آیا می‌خواهید ثبت‌نام کنید؟');
           setShowRegister(true);
         }
       } catch (error: any) {
         console.error('Recognition error:', error);
-        setMessage(`Recognition active... ${error.message || ''}`);
+        setMessage(`در حال تشخیص... ${error.message || ''}`);
       }
-    }, 2000); // Check every 2 seconds
+    }, 2000);
   }
 
-  // Handle registration
   async function handleRegister() {
     if (!registrationName.trim()) {
-      alert('Please enter your name');
+      alert('لطفاً نام خود را وارد کنید');
       return;
     }
 
     if (!videoRef.current) return;
 
-    // Check liveness before registration
     if (!livenessCheck || !livenessCheck.isLive) {
-      setMessage('⚠️ Please complete liveness check first. Move your head or blink.');
+      setMessage('لطفاً ابتدا بررسی زنده بودن را تکمیل کنید. سر خود را حرکت دهید.');
       return;
     }
 
     setIsRegistering(true);
-    setMessage('Capturing your face...');
+    setMessage('در حال ثبت تصویر چهره...');
 
     try {
-      // Stop continuous recognition
       if (recognitionIntervalRef.current) {
         clearInterval(recognitionIntervalRef.current);
       }
 
-      // Capture frame
       const imageBase64 = captureFrame(videoRef.current);
       if (!imageBase64) {
-        throw new Error('Failed to capture image');
+        throw new Error('خطا در ثبت تصویر');
       }
 
-      setMessage('Registering...');
+      setMessage('در حال ثبت‌نام...');
 
-      // Register user
       const result = await registerUser(registrationName.trim(), imageBase64, registrationMobile.trim() || undefined);
 
-      setMessage(`Registration successful! Welcome, ${result.name}!`);
+      setMessage(`ثبت‌نام موفق! خوش آمدید، ${result.name}!`);
 
-      // Login and redirect
       login(result.name, result.user_id, result.mobile);
       setTimeout(() => {
         router.push('/profile');
       }, 1000);
     } catch (error: any) {
       console.error('Registration error:', error);
-      setMessage(`Registration failed: ${error.message}`);
+      setMessage(`خطا در ثبت‌نام: ${error.message}`);
       setIsRegistering(false);
-      
-      // Restart liveness check
       setIsCheckingLiveness(false);
       if (livenessDetectorRef.current) {
         livenessDetectorRef.current.reset();
@@ -219,94 +194,272 @@ export default function WebcamRecognition() {
   }
 
   return (
-    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>Face Recognition Authentication</h1>
-      
-      <div style={{ position: 'relative', marginBottom: '20px' }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      padding: '0',
+    }}>
+      {/* Header */}
+      <header style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '20px 40px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        backdropFilter: 'blur(10px)',
+        background: 'rgba(15,15,26,0.85)',
+        boxSizing: 'border-box',
+      }}>
+        <h1 style={{
+          margin: 0,
+          fontSize: '22px',
+          fontWeight: 700,
+          background: 'linear-gradient(90deg, #6c63ff, #48c6ef)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+        }}>
+          احراز هویت با تشخیص چهره
+        </h1>
+        <button
+          onClick={() => router.push('/users')}
           style={{
-            width: '100%',
-            maxWidth: '640px',
-            height: 'auto',
-            border: livenessCheck?.isLive ? '3px solid #4CAF50' : '2px solid #333',
-            borderRadius: '8px',
-            backgroundColor: '#000',
+            background: 'rgba(255,255,255,0.06)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '10px',
+            color: '#a0a0b8',
+            padding: '8px 16px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            transition: 'all 0.2s',
+            fontFamily: 'inherit',
           }}
-        />
-      </div>
+          onMouseEnter={e => {
+            e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
+            e.currentTarget.style.color = '#fff';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+            e.currentTarget.style.color = '#a0a0b8';
+          }}
+        >
+          لیست کاربران
+        </button>
+      </header>
 
-      <div style={{ marginBottom: '20px' }}>
-        <p style={{ fontSize: '16px', fontWeight: 'bold' }}>{message}</p>
-      </div>
-
-      {showRegister && !isRegistering && (
-        <div style={{ marginTop: '20px', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-          <h2>Register New User</h2>
-          <p>We don&apos;t recognize your face. Would you like to register?</p>
-          
-          <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '320px' }}>
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={registrationName}
-              onChange={(e) => setRegistrationName(e.target.value)}
-              style={{
-                padding: '10px',
-                fontSize: '16px',
-                border: '1px solid #ccc',
-                borderRadius: '4px',
-                width: '100%',
-                boxSizing: 'border-box',
-              }}
-            />
-            <input
-              type="tel"
-              placeholder="Enter your mobile number"
-              value={registrationMobile}
-              onChange={(e) => setRegistrationMobile(e.target.value)}
-              style={{
-                padding: '10px',
-                fontSize: '16px',
-                border: '1px solid #ccc',
-                borderRadius: '4px',
-                width: '100%',
-                boxSizing: 'border-box',
-              }}
-            />
-            <button
-              onClick={handleRegister}
-              disabled={isRegistering}
-              style={{
-                padding: '10px 20px',
-                fontSize: '16px',
-                backgroundColor: '#0070f3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                width: '100%',
-              }}
-            >
-              Register
-            </button>
-          </div>
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '40px 20px',
+        maxWidth: '700px',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}>
+        {/* Video Container */}
+        <div style={{
+          position: 'relative',
+          marginBottom: '24px',
+          borderRadius: '20px',
+          overflow: 'hidden',
+          border: livenessCheck?.isLive
+            ? '2px solid rgba(76,175,80,0.5)'
+            : '2px solid rgba(108,99,255,0.3)',
+          boxShadow: livenessCheck?.isLive
+            ? '0 0 30px rgba(76,175,80,0.15)'
+            : '0 0 30px rgba(108,99,255,0.1)',
+          transition: 'border-color 0.5s, box-shadow 0.5s',
+          width: '100%',
+          maxWidth: '560px',
+        }}>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              width: '100%',
+              height: 'auto',
+              display: 'block',
+              backgroundColor: '#0a0a14',
+              transform: 'scaleX(-1)',
+            }}
+          />
+          {/* Progress bar overlay */}
+          {!livenessCheck?.isLive && livenessProgress > 0 && (
+            <div style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: '4px',
+              background: 'rgba(0,0,0,0.5)',
+            }}>
+              <div style={{
+                height: '100%',
+                width: `${livenessProgress}%`,
+                background: 'linear-gradient(90deg, #6c63ff, #48c6ef)',
+                transition: 'width 0.3s',
+                borderRadius: '2px',
+              }} />
+            </div>
+          )}
         </div>
-      )}
 
-      <div style={{ marginTop: '30px', fontSize: '14px', color: '#666' }}>
-        <p><strong>How it works:</strong></p>
-        <ul>
-          <li>The system starts your webcam automatically</li>
-          <li>Face recognition runs continuously</li>
-          <li>If recognized, you&apos;ll be logged in instantly</li>
-          <li>If not recognized, you can register with your name and mobile number</li>
-        </ul>
+        {/* Status Message */}
+        <div style={{
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          borderRadius: '14px',
+          padding: '16px 24px',
+          marginBottom: '24px',
+          textAlign: 'center',
+          width: '100%',
+          maxWidth: '560px',
+          boxSizing: 'border-box',
+        }}>
+          <p style={{
+            margin: 0,
+            fontSize: '15px',
+            fontWeight: 500,
+            color: '#c0c0d8',
+            lineHeight: 1.7,
+          }}>
+            {message}
+          </p>
+        </div>
+
+        {/* Registration Form */}
+        {showRegister && !isRegistering && (
+          <div style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: '16px',
+            padding: '28px',
+            width: '100%',
+            maxWidth: '560px',
+            boxSizing: 'border-box',
+          }}>
+            <h2 style={{
+              margin: '0 0 8px 0',
+              fontSize: '18px',
+              fontWeight: 700,
+              background: 'linear-gradient(90deg, #6c63ff, #48c6ef)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}>
+              ثبت‌نام کاربر جدید
+            </h2>
+            <p style={{ margin: '0 0 20px 0', fontSize: '14px', color: '#7a7a9a' }}>
+              چهره شما شناسایی نشد. آیا می‌خواهید ثبت‌نام کنید؟
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>نام</label>
+                <input
+                  type="text"
+                  placeholder="نام خود را وارد کنید"
+                  value={registrationName}
+                  onChange={(e) => setRegistrationName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>شماره تماس</label>
+                <input
+                  type="tel"
+                  placeholder="شماره موبایل"
+                  value={registrationMobile}
+                  onChange={(e) => setRegistrationMobile(e.target.value)}
+                  style={{ ...inputStyle, direction: 'ltr', textAlign: 'right' }}
+                />
+              </div>
+              <button
+                onClick={handleRegister}
+                disabled={isRegistering}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '15px',
+                  fontWeight: 600,
+                  background: 'linear-gradient(135deg, #6c63ff, #48c6ef)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: 'pointer',
+                  width: '100%',
+                  fontFamily: 'inherit',
+                  transition: 'opacity 0.2s, transform 0.2s',
+                  opacity: isRegistering ? 0.6 : 1,
+                }}
+                onMouseEnter={e => {
+                  if (!isRegistering) e.currentTarget.style.opacity = '0.85';
+                }}
+                onMouseLeave={e => {
+                  if (!isRegistering) e.currentTarget.style.opacity = '1';
+                }}
+              >
+                ثبت‌نام
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Info Section */}
+        <div style={{
+          marginTop: '16px',
+          padding: '20px 24px',
+          background: 'rgba(255,255,255,0.02)',
+          border: '1px solid rgba(255,255,255,0.05)',
+          borderRadius: '14px',
+          width: '100%',
+          maxWidth: '560px',
+          boxSizing: 'border-box',
+        }}>
+          <p style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: 600, color: '#9a9abc' }}>
+            نحوه عملکرد:
+          </p>
+          <ul style={{
+            margin: 0,
+            paddingRight: '18px',
+            paddingLeft: 0,
+            fontSize: '13px',
+            color: '#6a6a8a',
+            lineHeight: 2,
+            listStyleType: 'none',
+          }}>
+            <li>○ &nbsp;دوربین به صورت خودکار فعال می‌شود</li>
+            <li>○ &nbsp;تشخیص چهره به صورت مداوم اجرا می‌شود</li>
+            <li>○ &nbsp;در صورت شناسایی، ورود خودکار انجام می‌شود</li>
+            <li>○ &nbsp;در صورت عدم شناسایی، می‌توانید ثبت‌نام کنید</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
 }
 
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: '12px',
+  fontWeight: 500,
+  color: '#7a7a9a',
+  marginBottom: '6px',
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '12px 14px',
+  borderRadius: '10px',
+  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'rgba(255,255,255,0.04)',
+  color: '#e0e0f0',
+  fontSize: '14px',
+  outline: 'none',
+  boxSizing: 'border-box',
+  transition: 'border-color 0.2s',
+  fontFamily: 'inherit',
+};

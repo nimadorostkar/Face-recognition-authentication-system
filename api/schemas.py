@@ -227,12 +227,15 @@ class UserInfo(BaseModel):
         id: User database ID
         name: User name
         mobile: User mobile number
+        visit_count: Total visit count
+        last_visit_at: Last visit timestamp
         created_at: Registration timestamp
     """
     id: int
     name: str
     mobile: Optional[str] = None
     visit_count: int = 0
+    last_visit_at: Optional[datetime] = None
     created_at: datetime
     
     class Config:
@@ -243,6 +246,7 @@ class UserInfo(BaseModel):
                 "name": "John Doe",
                 "mobile": "+989123456789",
                 "visit_count": 5,
+                "last_visit_at": "2024-11-13T14:30:00",
                 "created_at": "2024-11-13T12:00:00"
             }
         }

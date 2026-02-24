@@ -468,30 +468,73 @@ async def send_login_notification(
 async def list_users(
     skip: int = 0,
     limit: int = 100,
+    search: str = None,
+    min_visits: int = None,
+    max_visits: int = None,
+    joined_after: str = None,
+    joined_before: str = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
     db: Session = Depends(get_db)
 ):
     """
-    List registered users (for management/debugging).
+    List registered users with optional filtering and sorting.
     
     Args:
         skip: Number of users to skip (pagination)
         limit: Maximum number of users to return
+        search: Filter by name (partial match, case-insensitive)
+        min_visits: Minimum visit count filter
+        max_visits: Maximum visit count filter
+        joined_after: Filter users registered after this date (ISO format, e.g. 2024-01-01)
+        joined_before: Filter users registered before this date (ISO format, e.g. 2024-12-31)
+        sort_by: Sort field (name, visit_count, created_at)
+        sort_order: Sort direction (asc, desc)
         db: Database session
     
     Returns:
         List of UserInfo objects (without embeddings)
-    
-    Note: Embeddings are not returned for security and performance.
-    
-    TODO: Add authentication/authorization for this endpoint
-    TODO: Add filtering and search capabilities
     """
-    users = db.query(User).offset(skip).limit(limit).all()
+    query = db.query(User)
+
+    if search:
+        query = query.filter(User.name.ilike(f"%{search}%"))
+    if min_visits is not None:
+        query = query.filter(User.visit_count >= min_visits)
+    if max_visits is not None:
+        query = query.filter(User.visit_count <= max_visits)
+    if joined_after:
+        try:
+            dt = datetime.fromisoformat(joined_after)
+            query = query.filter(User.created_at >= dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid joined_after date format. Use ISO format (YYYY-MM-DD)")
+    if joined_before:
+        try:
+            dt = datetime.fromisoformat(joined_before)
+            query = query.filter(User.created_at <= dt)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid joined_before date format. Use ISO format (YYYY-MM-DD)")
+
+    sort_column = {
+        "name": User.name,
+        "visit_count": User.visit_count,
+        "created_at": User.created_at,
+    }.get(sort_by, User.created_at)
+
+    if sort_order == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    users = query.offset(skip).limit(limit).all()
     return [
         UserInfo(
             id=user.id,
             name=user.name,
             mobile=user.mobile,
+            visit_count=user.visit_count,
+            last_visit_at=user.last_visit_at,
             created_at=user.created_at
         )
         for user in users

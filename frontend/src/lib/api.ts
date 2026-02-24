@@ -111,6 +111,46 @@ export function captureFrame(video: HTMLVideoElement): string | null {
   return canvasToBase64(canvas);
 }
 
+export interface UserInfo {
+  id: number;
+  name: string;
+  mobile: string | null;
+  visit_count: number;
+  last_visit_at: string | null;
+  created_at: string;
+}
+
+export interface FetchUsersParams {
+  skip?: number;
+  limit?: number;
+  search?: string;
+  min_visits?: number;
+  max_visits?: number;
+  joined_after?: string;
+  joined_before?: string;
+  sort_by?: string;
+  sort_order?: string;
+}
+
+export async function fetchUsers(params: FetchUsersParams = {}): Promise<UserInfo[]> {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      searchParams.set(key, String(value));
+    }
+  });
+
+  const query = searchParams.toString();
+  const url = `${API_BASE_URL}/users/${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const msg = await getErrorMessage(response, 'Failed to fetch users');
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
 /**
  * Send login notification SMS to user after successful face authentication.
  * Fire-and-forget: errors are logged but don't affect the login flow.
