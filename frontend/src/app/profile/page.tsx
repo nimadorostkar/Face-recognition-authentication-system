@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function ProfilePage() {
@@ -108,10 +109,15 @@ export default function ProfilePage() {
         </button>
       </header>
 
+      {/* Logo */}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '28px 0 0 0' }}>
+        <Image src="/media/Avro.png" alt="Avro" width={140} height={56} style={{ objectFit: 'contain' }} priority />
+      </div>
+
       <div style={{
         maxWidth: '600px',
         margin: '0 auto',
-        padding: '40px 24px',
+        padding: '24px 24px 40px',
       }}>
         {/* Avatar + Welcome */}
         <div style={{

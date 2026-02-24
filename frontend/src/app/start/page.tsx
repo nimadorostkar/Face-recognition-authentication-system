@@ -308,7 +308,7 @@ export default function EnergyEfficientStartPage() {
 
     const line1 = `سلام ${userName || 'کاربر'}، خوش اومدی`;
     const line2 = welcomeTextRef.current;
-    const line3 = `وااای 😍 این ${visitCount}امین باره که پیش مایی! مرسی که کنار مایی 💛`;
+    const line3 = ` 😍 این ${visitCount} امین باره که پیش مایی! مرسی که کنار مایی ❤️`;
     let charIndex = 0;
     let currentLine = 1;
     const line1Chars = [...line1];

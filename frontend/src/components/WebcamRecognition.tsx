@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { recognizeFace, registerUser, captureFrame } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { SimpleLivenessDetector, extractFrameData, LivenessResult } from '@/lib/liveness';
@@ -249,12 +250,17 @@ export default function WebcamRecognition() {
         </button>
       </header>
 
+      {/* Logo */}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '28px 0 0 0' }}>
+        <Image src="/media/Avro.png" alt="Avro" width={140} height={56} style={{ objectFit: 'contain' }} priority />
+      </div>
+
       <div style={{
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        padding: '40px 20px',
+        padding: '24px 20px',
         maxWidth: '700px',
         width: '100%',
         boxSizing: 'border-box',

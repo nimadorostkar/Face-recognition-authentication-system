@@ -4,6 +4,9 @@ import { AuthProvider } from '@/contexts/AuthContext';
 export const metadata: Metadata = {
   title: 'Face Recognition Authentication',
   description: 'Real-time face recognition authentication system',
+  other: {
+    google: 'notranslate',
+  },
 };
 
 const fontFaceStyles = `
@@ -41,8 +44,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="fa" dir="rtl">
+    <html lang="fa" dir="rtl" translate="no">
       <head>
+        <meta name="google" content="notranslate" />
         <style dangerouslySetInnerHTML={{ __html: fontFaceStyles }} />
       </head>
       <body style={{

@@ -465,6 +465,7 @@ async def send_login_notification(
 
 
 @app.get("/users/", response_model=List[UserInfo], tags=["Management"])
+@app.get("/users", response_model=List[UserInfo], tags=["Management"])
 async def list_users(
     skip: int = 0,
     limit: int = 100,
@@ -581,6 +582,7 @@ async def delete_user(
 
 
 @app.get("/stats/", tags=["Management"])
+@app.get("/stats", tags=["Management"])
 async def get_stats(db: Session = Depends(get_db)):
     """
     Get system statistics.

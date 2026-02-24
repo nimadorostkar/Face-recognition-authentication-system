@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { fetchUsers, UserInfo, FetchUsersParams } from '@/lib/api';
 
 function formatDate(iso: string | null): string {
@@ -163,6 +164,11 @@ export default function UsersPage() {
           {loading ? '...' : `${users.length} کاربر`}
         </div>
       </header>
+
+      {/* Logo */}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '28px 0 0 0' }}>
+        <Image src="/media/Avro.png" alt="Avro" width={140} height={56} style={{ objectFit: 'contain' }} priority />
+      </div>
 
       <div style={{ padding: '24px 40px', maxWidth: '1200px', margin: '0 auto' }}>
         {/* Filters */}
