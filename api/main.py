@@ -8,19 +8,25 @@ This is a production-ready face recognition backend that:
 - Designed for future upgrades (ArcFace, GPU, liveness detection)
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+from collections import defaultdict, deque
 import logging
 import asyncio
+import threading
+import time
 import os
 
 import database
-from database import init_db, get_db, User, find_similar_faces, increment_visit_if_eligible
+from database import (
+    init_db, get_db, User,
+    find_similar_faces, find_duplicate_face, increment_visit_if_eligible,
+)
 from schemas import (
     RegisterRequest, RegisterResponse,
     RecognizeRequest, RecognizeResponse,
@@ -32,9 +38,34 @@ from face_utils import (
     NoFaceDetectedError,
     MultipleFacesDetectedError,
     InvalidImageError,
+    LowQualityFaceError,
+    SpoofDetectedError,
     FaceRecognitionError
 )
 from sms import send_login_sms
+
+# ── Runtime configuration (env-driven) ─────────────────────────────────
+
+# Comma-separated list of allowed CORS origins. Defaults to "*" so existing
+# deployments keep working; set ALLOWED_ORIGINS in production to lock it down.
+_allowed = os.getenv("ALLOWED_ORIGINS", "*").strip()
+ALLOWED_ORIGINS = ["*"] if _allowed in ("", "*") else [o.strip() for o in _allowed.split(",") if o.strip()]
+
+# Optional API key. When set, management/destructive endpoints require the
+# `X-API-Key` header. When unset, those endpoints stay open (backward compat).
+API_KEY = os.getenv("API_KEY", "").strip()
+
+# Recognition match threshold (L2 distance). Lower = stricter (fewer false
+# positives). Kept at the previous default of 0.45.
+RECOGNIZE_THRESHOLD = float(os.getenv("RECOGNIZE_THRESHOLD", "0.45"))
+
+# Prevent the same physical face from registering twice. Set to 0 to disable.
+DEDUPE_ON_REGISTER = os.getenv("DEDUPE_ON_REGISTER", "1").strip().lower() in ("1", "true", "yes", "on")
+DEDUPE_THRESHOLD = float(os.getenv("DEDUPE_THRESHOLD", "0.32"))
+
+# Simple per-IP rate limiting (requests / window seconds) for face endpoints.
+RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "60"))
+RATE_LIMIT_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW", "60"))
 
 # Configure logging
 logging.basicConfig(
@@ -73,14 +104,63 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS for web frontend integration
+# Configure CORS for web frontend integration. Credentials cannot be combined
+# with a wildcard origin per the CORS spec, so only enable them when a concrete
+# allowlist is configured.
+_allow_credentials = ALLOWED_ORIGINS != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Security: optional API-key auth for sensitive endpoints ─────────────
+
+def require_api_key(x_api_key: Optional[str] = Header(None)):
+    """
+    Dependency guarding management/destructive endpoints.
+
+    No-op when API_KEY is not configured (keeps existing setups working);
+    otherwise requires a matching `X-API-Key` header.
+    """
+    if not API_KEY:
+        return
+    if not x_api_key or x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+        )
+
+
+# ── Security: simple in-memory per-IP rate limiter ──────────────────────
+# Note: in-memory state is per-process. For multi-instance deployments back
+# this with Redis; the interface below stays the same.
+_rate_lock = threading.Lock()
+_rate_hits: "defaultdict[str, deque]" = defaultdict(deque)
+
+
+def rate_limit(request: Request):
+    """Reject callers exceeding RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW."""
+    if RATE_LIMIT_MAX <= 0:
+        return
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with _rate_lock:
+        hits = _rate_hits[client]
+        cutoff = now - RATE_LIMIT_WINDOW
+        while hits and hits[0] < cutoff:
+            hits.popleft()
+        if len(hits) >= RATE_LIMIT_MAX:
+            retry = max(0, int(RATE_LIMIT_WINDOW - (now - hits[0])))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please slow down.",
+                headers={"Retry-After": str(retry)},
+            )
+        hits.append(now)
 
 
 
@@ -176,7 +256,8 @@ async def health_check(db: Session = Depends(get_db)):
 @app.post("/register", response_model=RegisterResponse, tags=["Authentication"])
 async def register_user(
     request: RegisterRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _rl: None = Depends(rate_limit),
 ):
     """
     Register a new user with face recognition.
@@ -218,11 +299,13 @@ async def register_user(
                 ).dict()
             )
         
-        # Extract face embedding from image
+        # Extract face embedding from image. Registration enforces face
+        # quality (and liveness if enabled) so enrollments are high quality.
         try:
             embedding = get_face_embedding_from_image(
                 request.image,
-                require_single_face=True
+                require_single_face=True,
+                purpose="register",
             )
         except NoFaceDetectedError:
             raise HTTPException(
@@ -242,6 +325,24 @@ async def register_user(
                     suggestion="Provide an image with only one face"
                 ).dict()
             )
+        except LowQualityFaceError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    error="LowQualityFace",
+                    detail=str(e),
+                    suggestion="Move closer, hold still, and ensure even, bright lighting"
+                ).dict()
+            )
+        except SpoofDetectedError as e:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ErrorResponse(
+                    error="SpoofDetected",
+                    detail=str(e),
+                    suggestion="Use a live camera capture rather than a photo or screen"
+                ).dict()
+            )
         except InvalidImageError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -251,7 +352,21 @@ async def register_user(
                     suggestion="Provide a valid base64-encoded image (JPEG or PNG)"
                 ).dict()
             )
-        
+
+        # Prevent the same physical face from enrolling twice under a new name.
+        if DEDUPE_ON_REGISTER:
+            dup = find_duplicate_face(db, embedding, threshold=DEDUPE_THRESHOLD)
+            if dup:
+                dup_user, dup_distance = dup
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=ErrorResponse(
+                        error="DuplicateFace",
+                        detail=f"This face appears to already be registered (as '{dup_user.name}')",
+                        suggestion="If this is you, no need to register again"
+                    ).dict()
+                )
+
         # Create new user with embedding
         new_user = User(
             name=request.name,
@@ -293,7 +408,8 @@ async def register_user(
 async def recognize_face(
     request: RecognizeRequest,
     db: Session = Depends(get_db),
-    threshold: float = 0.45
+    _rl: None = Depends(rate_limit),
+    threshold: float = None,
 ):
     """
     Recognize a face from an image.
@@ -331,12 +447,14 @@ async def recognize_face(
     TODO: Cache frequently accessed embeddings in Redis for faster lookup
     TODO: Add face tracking across multiple requests (session-based)
     """
+    threshold = RECOGNIZE_THRESHOLD if threshold is None else threshold
     try:
         # Extract face embedding from image
         try:
             embedding = get_face_embedding_from_image(
                 request.image,
-                require_single_face=True
+                require_single_face=True,
+                purpose="recognize",
             )
         except NoFaceDetectedError:
             raise HTTPException(
@@ -356,6 +474,24 @@ async def recognize_face(
                     suggestion="Provide an image with only one face for recognition"
                 ).dict()
             )
+        except LowQualityFaceError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    error="LowQualityFace",
+                    detail=str(e),
+                    suggestion="Move closer and ensure even, bright lighting"
+                ).dict()
+            )
+        except SpoofDetectedError as e:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ErrorResponse(
+                    error="SpoofDetected",
+                    detail=str(e),
+                    suggestion="Use a live camera capture rather than a photo or screen"
+                ).dict()
+            )
         except InvalidImageError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -365,7 +501,7 @@ async def recognize_face(
                     suggestion="Provide a valid base64-encoded image (JPEG or PNG)"
                 ).dict()
             )
-        
+
         # Search for similar faces using pgvector
         matches = find_similar_faces(db, embedding, threshold=threshold, limit=1)
         
@@ -476,7 +612,8 @@ async def list_users(
     joined_before: str = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _auth: None = Depends(require_api_key),
 ):
     """
     List registered users with optional filtering and sorting.
@@ -545,7 +682,8 @@ async def list_users(
 @app.delete("/users/{user_id}", tags=["Management"])
 async def delete_user(
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _auth: None = Depends(require_api_key),
 ):
     """
     Delete a user by ID.
@@ -599,7 +737,8 @@ async def get_stats(db: Session = Depends(get_db)):
         "total_users": total_users,
         "database": "PostgreSQL with pgvector",
         "embedding_model": "dlib ResNet (128D)",
-        "similarity_metric": "cosine distance"
+        "similarity_metric": "L2 (Euclidean) distance",
+        "ann_index": "ivfflat (vector_l2_ops)"
     }
 
 

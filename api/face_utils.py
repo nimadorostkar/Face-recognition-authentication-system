@@ -1,26 +1,94 @@
 """
 Face recognition utilities using dlib and OpenCV.
 
-This module provides core face recognition functionality:
-- Face detection in images
-- Face embedding extraction (128D vectors)
-- Image preprocessing and validation
+This module provides the core face pipeline:
+- Image decoding (with EXIF orientation handling and size guards)
+- Robust face detection with an enhanced fallback for hard frames
+  (low light, small/angled faces, mild blur)
+- Optional face-quality gating (blur / brightness / size)
+- Optional passive anti-spoofing (screen / print replay heuristic)
+- 128D face embedding extraction (optionally jittered for robustness)
+- Distance / confidence helpers
 
-Current implementation uses face_recognition (dlib-based) for simplicity.
-Future upgrades are clearly marked with TODO comments.
+Design notes
+------------
+The *normal* recognition path is intentionally kept identical to the
+original implementation so that embeddings already stored in the database
+remain comparable.  All accuracy/robustness additions are either:
+  * additive fallbacks that only run when the normal path fails, or
+  * opt-in features controlled by environment variables (default off /
+    lenient) so they can be rolled out safely in production.
+
+Tunable environment variables (all optional):
+  FACE_DETECTION_MODEL      "hog" (default, CPU) | "cnn" (GPU)
+  FACE_DETECT_UPSAMPLE      base upsample passes for detection (default 1)
+  FACE_MAX_DIM              max image dimension before downscale (default 1024)
+  FACE_ENHANCE_FALLBACK     enable CLAHE/upsample retry on miss (default 1)
+  FACE_NUM_JITTERS          embedding jitters; higher = more robust/slower (default 1)
+  FACE_QUALITY_GATE         "off" | "register" | "all"  (default "register")
+  FACE_MIN_BLUR             min Laplacian variance, lower = blurrier (default 45.0)
+  FACE_MIN_BRIGHTNESS       min mean luma 0-255 (default 40.0)
+  FACE_MAX_BRIGHTNESS       max mean luma 0-255 (default 235.0)
+  FACE_MIN_SIZE             min face box side in px (default 70)
+  FACE_ANTISPOOF            enable passive anti-spoof check (default 0)
+  FACE_ANTISPOOF_MIN_SCORE  min liveness score 0-1 to accept (default 0.45)
 """
 
-import face_recognition
-import cv2
-import numpy as np
-from typing import List, Optional, Tuple
 import base64
-from PIL import Image
 import io
+import logging
+import os
+from typing import List, Optional, Tuple
 
+import cv2
+import face_recognition
+import numpy as np
+from PIL import Image, ImageOps
+
+logger = logging.getLogger(__name__)
+
+
+# ── Configuration (env-tunable, safe defaults) ─────────────────────────
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "hog")
+DETECT_UPSAMPLE = _env_int("FACE_DETECT_UPSAMPLE", 1)
+MAX_DIM = _env_int("FACE_MAX_DIM", 1024)
+ENHANCE_FALLBACK = _env_bool("FACE_ENHANCE_FALLBACK", True)
+NUM_JITTERS = max(1, _env_int("FACE_NUM_JITTERS", 1))
+QUALITY_GATE = os.getenv("FACE_QUALITY_GATE", "register").strip().lower()
+MIN_BLUR = _env_float("FACE_MIN_BLUR", 45.0)
+MIN_BRIGHTNESS = _env_float("FACE_MIN_BRIGHTNESS", 40.0)
+MAX_BRIGHTNESS = _env_float("FACE_MAX_BRIGHTNESS", 235.0)
+MIN_FACE_SIZE = _env_int("FACE_MIN_SIZE", 70)
+ANTISPOOF = _env_bool("FACE_ANTISPOOF", False)
+ANTISPOOF_MIN_SCORE = _env_float("FACE_ANTISPOOF_MIN_SCORE", 0.45)
+
+
+# ── Exceptions ─────────────────────────────────────────────────────────
 
 class FaceRecognitionError(Exception):
-    """Custom exception for face recognition errors."""
+    """Base class for face recognition errors."""
     pass
 
 
@@ -39,305 +107,343 @@ class InvalidImageError(FaceRecognitionError):
     pass
 
 
+class LowQualityFaceError(FaceRecognitionError):
+    """Raised when the detected face fails quality checks (blur/lighting/size)."""
+    pass
+
+
+class SpoofDetectedError(FaceRecognitionError):
+    """Raised when the image is suspected to be a spoof (photo/screen replay)."""
+    pass
+
+
+# ── Decoding / preprocessing ───────────────────────────────────────────
+
 def decode_image(base64_string: str) -> np.ndarray:
     """
-    Decode base64 string to OpenCV image (numpy array).
-    
-    Args:
-        base64_string: Base64-encoded image string
-    
-    Returns:
-        Image as numpy array (RGB format)
-    
-    Raises:
-        InvalidImageError: If image cannot be decoded
-    
-    TODO: Add support for multiple image formats (JPEG, PNG, WebP)
-    TODO: Add image quality validation (resolution, clarity checks)
+    Decode a base64 string to an RGB numpy array.
+
+    Handles data-URL prefixes, applies EXIF orientation (phones often store
+    rotated images), and downscales very large images for speed/memory.
     """
     try:
-        # Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
         if ',' in base64_string:
             base64_string = base64_string.split(',', 1)[1]
-        
-        # Decode base64 to bytes
+
         img_bytes = base64.b64decode(base64_string)
-        
-        # Convert bytes to PIL Image
         pil_image = Image.open(io.BytesIO(img_bytes))
-        
-        # Convert PIL Image to numpy array (RGB)
+
+        # Respect EXIF orientation so sideways phone photos still detect faces.
+        pil_image = ImageOps.exif_transpose(pil_image)
+
         img_array = np.array(pil_image.convert('RGB'))
-        
-        return img_array
-    
     except Exception as e:
         raise InvalidImageError(f"Failed to decode image: {str(e)}")
 
+    if img_array.size == 0:
+        raise InvalidImageError("Decoded image is empty")
+
+    # Downscale oversized images (keeps detection fast and memory bounded).
+    h, w = img_array.shape[:2]
+    longest = max(h, w)
+    if MAX_DIM and longest > MAX_DIM:
+        scale = MAX_DIM / float(longest)
+        img_array = cv2.resize(
+            img_array,
+            (int(round(w * scale)), int(round(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    return img_array
+
 
 def preprocess_image(image: np.ndarray, target_size: Optional[Tuple[int, int]] = None) -> np.ndarray:
-    """
-    Preprocess image for face detection and recognition.
-    
-    Args:
-        image: Input image as numpy array (RGB)
-        target_size: Optional resize dimensions (width, height)
-    
-    Returns:
-        Preprocessed image
-    
-    Current preprocessing:
-    - Optional resizing for faster processing
-    - Color space is already RGB (required by face_recognition)
-    
-    TODO: Add histogram equalization for better lighting normalization
-    TODO: Add face alignment using facial landmarks for better accuracy
-    TODO: Add image quality enhancement (denoising, sharpening)
-    """
-    # Resize if target size specified (for faster processing on large images)
+    """Ensure the image is RGB and optionally resize it."""
     if target_size:
         image = cv2.resize(image, target_size, interpolation=cv2.INTER_AREA)
-    
-    # Ensure RGB format (face_recognition requires RGB)
-    if len(image.shape) == 2:  # Grayscale
+
+    if len(image.shape) == 2:  # Grayscale -> RGB
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    elif image.shape[2] == 4:  # RGBA
+    elif image.shape[2] == 4:  # RGBA -> RGB
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-    
+
     return image
 
 
-def detect_faces(image: np.ndarray, model: str = "hog") -> List[Tuple[int, int, int, int]]:
+def enhance_for_lowlight(image: np.ndarray) -> np.ndarray:
     """
-    Detect faces in an image.
-    
-    Args:
-        image: Input image as numpy array (RGB)
-        model: Detection model - "hog" (faster, CPU) or "cnn" (more accurate, GPU)
-    
-    Returns:
-        List of face bounding boxes as (top, right, bottom, left) tuples
-    
-    Current: Uses dlib's HOG-based detector (fast on CPU)
-    
-    TODO: Upgrade to RetinaFace for better accuracy and speed
-          - RetinaFace detects small faces better
-          - Provides facial landmarks and confidence scores
-          - Better handling of various angles and lighting
-    
-    TODO: Alternative: MediaPipe Face Detection
-          - Lightweight, optimized for real-time
-          - Works well on mobile and web
-          - Good for video streams
-    
-    TODO: Add face quality scoring (blur detection, pose estimation)
+    Improve contrast/brightness for hard frames using CLAHE on the luminance
+    channel.  Only used as a *fallback* when normal detection finds no face,
+    so it never alters the embeddings of cleanly-detected faces.
     """
-    # Detect face locations using dlib (via face_recognition library)
-    # model="hog": CPU-friendly, good for most cases
-    # model="cnn": More accurate but requires GPU for real-time performance
-    face_locations = face_recognition.face_locations(image, model=model)
-    
-    return face_locations
+    try:
+        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        merged = cv2.merge((l, a, b))
+        return cv2.cvtColor(merged, cv2.COLOR_LAB2RGB)
+    except Exception:
+        return image
 
 
-def extract_face_embedding(image: np.ndarray, face_location: Tuple[int, int, int, int]) -> List[float]:
+# ── Detection ──────────────────────────────────────────────────────────
+
+def detect_faces(
+    image: np.ndarray,
+    model: str = None,
+    upsample: int = None,
+) -> List[Tuple[int, int, int, int]]:
     """
-    Extract face embedding (feature vector) from a detected face.
-    
-    Args:
-        image: Input image as numpy array (RGB)
-        face_location: Face bounding box as (top, right, bottom, left)
-    
-    Returns:
-        128-dimensional face embedding vector
-    
-    Current: Uses dlib's ResNet-based face recognition model
-    - Generates 128D embeddings
-    - Trained on ~3 million faces
-    - Good accuracy for most use cases
-    
-    TODO: Upgrade to ArcFace (InsightFace) for state-of-the-art accuracy
-          - 512D embeddings (change database schema)
-          - Superior accuracy on challenging cases
-          - Better handling of age, pose, and expression variations
-          - Example implementation:
-            ```python
-            from insightface.app import FaceAnalysis
-            app = FaceAnalysis()
-            app.prepare(ctx_id=0, det_size=(640, 640))
-            faces = app.get(img)
-            embedding = faces[0].embedding  # 512D vector
-            ```
-    
-    TODO: Support ONNX Runtime for faster inference
-          - Export models to ONNX format
-          - 2-3x speedup on CPU, 5-10x on GPU
-    
-    TODO: Add TensorRT support for NVIDIA GPUs
-          - Up to 10x faster inference on compatible GPUs
-          - Critical for real-time video processing
+    Detect faces, returning (top, right, bottom, left) boxes.
+
+    `upsample` (number_of_times_to_upsample) improves detection of small or
+    slightly off-angle faces at the cost of speed.
     """
-    # Extract 128D embedding using dlib's face recognition model
-    # This internally:
-    # 1. Aligns the face using 68 facial landmarks
-    # 2. Passes through ResNet to generate 128D feature vector
-    encodings = face_recognition.face_encodings(image, [face_location])
-    
+    model = model or DETECTION_MODEL
+    upsample = DETECT_UPSAMPLE if upsample is None else upsample
+    return face_recognition.face_locations(
+        image, number_of_times_to_upsample=upsample, model=model
+    )
+
+
+def _box_area(box: Tuple[int, int, int, int]) -> int:
+    top, right, bottom, left = box
+    return max(0, bottom - top) * max(0, right - left)
+
+
+def _largest_face(boxes: List[Tuple[int, int, int, int]]) -> Tuple[int, int, int, int]:
+    """Pick the most prominent (closest) face — the intended subject."""
+    return max(boxes, key=_box_area)
+
+
+def detect_faces_robust(image: np.ndarray) -> Tuple[np.ndarray, List[Tuple[int, int, int, int]]]:
+    """
+    Multi-stage detection that returns the image actually used and the boxes
+    found.  Stages escalate only when needed, so the common case stays fast
+    and embedding-consistent with previously enrolled users:
+
+      1. Normal detection (original behaviour).
+      2. Extra upsampling pass (small / angled faces).
+      3. CLAHE low-light enhancement + upsampling (dim frames).
+    """
+    boxes = detect_faces(image)
+    if boxes:
+        return image, boxes
+
+    # Stage 2: more upsampling (helps small/angled faces).
+    boxes = detect_faces(image, upsample=DETECT_UPSAMPLE + 1)
+    if boxes:
+        return image, boxes
+
+    # Stage 3: low-light enhancement fallback.
+    if ENHANCE_FALLBACK:
+        enhanced = enhance_for_lowlight(image)
+        boxes = detect_faces(enhanced, upsample=DETECT_UPSAMPLE + 1)
+        if boxes:
+            return enhanced, boxes
+
+    return image, []
+
+
+# ── Quality assessment ─────────────────────────────────────────────────
+
+def _crop(image: np.ndarray, box: Tuple[int, int, int, int]) -> np.ndarray:
+    top, right, bottom, left = box
+    top, left = max(0, top), max(0, left)
+    return image[top:bottom, left:right]
+
+
+def assess_quality(image: np.ndarray, box: Tuple[int, int, int, int]) -> dict:
+    """
+    Compute simple, fast quality metrics for the detected face crop.
+
+    Returns a dict with: blur (Laplacian variance), brightness (mean luma),
+    size (min box side, px) and an `ok`/`reason` verdict against thresholds.
+    """
+    face = _crop(image, box)
+    if face.size == 0:
+        return {"ok": False, "reason": "empty_crop", "blur": 0.0, "brightness": 0.0, "size": 0}
+
+    gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY)
+    blur = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    brightness = float(gray.mean())
+    top, right, bottom, left = box
+    size = int(min(bottom - top, right - left))
+
+    ok, reason = True, None
+    if size < MIN_FACE_SIZE:
+        ok, reason = False, "face_too_small"
+    elif blur < MIN_BLUR:
+        ok, reason = False, "too_blurry"
+    elif brightness < MIN_BRIGHTNESS:
+        ok, reason = False, "too_dark"
+    elif brightness > MAX_BRIGHTNESS:
+        ok, reason = False, "overexposed"
+
+    return {"ok": ok, "reason": reason, "blur": blur, "brightness": brightness, "size": size}
+
+
+# ── Passive anti-spoofing (heuristic) ──────────────────────────────────
+
+def liveness_score(image: np.ndarray, box: Tuple[int, int, int, int]) -> float:
+    """
+    Lightweight passive liveness/anti-spoof score in [0, 1].
+
+    Heuristic only (no extra model): printed photos and phone/monitor
+    replays tend to be either unusually flat in micro-texture or contain
+    high-frequency screen-door / moiré energy and clipped colour.  We combine
+    a texture-richness term and a high-frequency-energy penalty.  This is a
+    deterrent, not a guarantee — for high-security deployments pair it with a
+    dedicated CNN liveness model or active challenge-response.
+
+    Returns ~1.0 for likely-live faces, lower for suspected replays.
+    """
+    face = _crop(image, box)
+    if face.size == 0:
+        return 0.0
+
+    gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    gray = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
+
+    # Texture richness: live skin has moderate-to-high local variance.
+    lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    texture_term = min(1.0, lap_var / 150.0)  # saturates around a healthy value
+
+    # High-frequency energy ratio: screen replays push energy into very high
+    # frequencies (pixel grid / moiré). Excess => penalty.
+    f = np.fft.fftshift(np.fft.fft2(gray))
+    mag = np.abs(f)
+    total = float(mag.sum()) + 1e-6
+    cy, cx = 64, 64
+    yy, xx = np.ogrid[:128, :128]
+    high = (yy - cy) ** 2 + (xx - cx) ** 2 > (45 ** 2)
+    high_ratio = float(mag[high].sum()) / total
+    hf_penalty = min(1.0, max(0.0, (high_ratio - 0.35) / 0.4))
+
+    score = max(0.0, min(1.0, 0.65 * texture_term + 0.35 * (1.0 - hf_penalty)))
+    return score
+
+
+# ── Embedding ──────────────────────────────────────────────────────────
+
+def extract_face_embedding(
+    image: np.ndarray,
+    face_location: Tuple[int, int, int, int],
+    num_jitters: int = None,
+) -> List[float]:
+    """
+    Extract a 128D embedding for the given face box.
+
+    `num_jitters` re-samples the face with small perturbations and averages
+    the results for a more stable embedding (slower).  Default keeps the
+    original single-pass behaviour for backward compatibility.
+    """
+    num_jitters = NUM_JITTERS if num_jitters is None else num_jitters
+    # NOTE: the landmark model is left at the library default so embeddings
+    # stay comparable with users enrolled before this change. num_jitters
+    # defaults to 1 (identical output); raising it improves robustness but
+    # changes embeddings, so re-enrollment is needed if you increase it.
+    encodings = face_recognition.face_encodings(
+        image, [face_location], num_jitters=num_jitters
+    )
     if len(encodings) == 0:
         raise NoFaceDetectedError("Failed to extract face encoding")
-    
-    # Convert numpy array to list for JSON serialization
-    embedding = encodings[0].tolist()
-    
-    return embedding
+    return encodings[0].tolist()
 
 
-def get_face_embedding_from_image(base64_image: str, require_single_face: bool = True) -> List[float]:
+def get_face_embedding_from_image(
+    base64_image: str,
+    require_single_face: bool = True,
+    enforce_quality: Optional[bool] = None,
+    enforce_liveness: Optional[bool] = None,
+    purpose: str = "recognize",
+) -> List[float]:
     """
-    End-to-end pipeline: base64 image -> face embedding.
-    
-    This is the main function used by API endpoints.
-    
+    End-to-end pipeline: base64 image -> 128D embedding.
+
+    Backward compatible: existing callers get the same behaviour plus the new
+    robust detection fallback.  Quality/liveness enforcement is opt-in and
+    governed by environment configuration unless explicitly overridden.
+
     Args:
-        base64_image: Base64-encoded image string
-        require_single_face: If True, raise error when multiple faces detected
-    
-    Returns:
-        128-dimensional face embedding vector
-    
+        base64_image: Base64-encoded image.
+        require_single_face: Reject images with more than one face.
+        enforce_quality: Force-enable/disable quality gate (overrides config).
+        enforce_liveness: Force-enable/disable anti-spoof (overrides config).
+        purpose: "register" or "recognize" — controls default quality gating.
+
     Raises:
-        InvalidImageError: If image is invalid
-        NoFaceDetectedError: If no face is detected
-        MultipleFacesDetectedError: If multiple faces detected and require_single_face=True
-    
-    Pipeline:
-    1. Decode base64 image
-    2. Preprocess image
-    3. Detect faces
-    4. Extract embedding from detected face
-    
-    TODO: Add batch processing support for multiple faces
-    TODO: Add face quality filtering (reject blurry/poorly lit faces)
-    TODO: Implement face cropping and alignment for better consistency
+        InvalidImageError, NoFaceDetectedError, MultipleFacesDetectedError,
+        LowQualityFaceError, SpoofDetectedError
     """
-    # Step 1: Decode image
     image = decode_image(base64_image)
-    
-    # Step 2: Preprocess
-    # Optionally resize large images for faster processing
-    # Uncomment if you want to resize images > 1024px on longest side
-    # h, w = image.shape[:2]
-    # if max(h, w) > 1024:
-    #     scale = 1024 / max(h, w)
-    #     new_size = (int(w * scale), int(h * scale))
-    #     image = preprocess_image(image, target_size=new_size)
-    
     image = preprocess_image(image)
-    
-    # Step 3: Detect faces
-    # Use "hog" model by default (fast on CPU)
-    # Change to "cnn" for better accuracy if GPU is available
-    face_locations = detect_faces(image, model="hog")
-    
+
+    # Robust, escalating detection (uses enhanced image only if needed).
+    used_image, face_locations = detect_faces_robust(image)
+
     if len(face_locations) == 0:
         raise NoFaceDetectedError("No face detected in the image")
-    
+
     if len(face_locations) > 1 and require_single_face:
         raise MultipleFacesDetectedError(
             f"Multiple faces detected ({len(face_locations)}). "
             "Please provide an image with a single face."
         )
-    
-    # Step 4: Extract embedding from first detected face
-    face_location = face_locations[0]
-    embedding = extract_face_embedding(image, face_location)
-    
-    return embedding
 
+    # Choose the most prominent face (robust even if require_single_face=False).
+    face_location = _largest_face(face_locations)
+
+    # ── Quality gate ──
+    if enforce_quality is None:
+        enforce_quality = QUALITY_GATE == "all" or (
+            QUALITY_GATE == "register" and purpose == "register"
+        )
+    if enforce_quality:
+        q = assess_quality(used_image, face_location)
+        if not q["ok"]:
+            raise LowQualityFaceError(
+                f"Face quality insufficient ({q['reason']}): "
+                f"blur={q['blur']:.0f}, brightness={q['brightness']:.0f}, size={q['size']}px"
+            )
+
+    # ── Passive anti-spoof ──
+    if enforce_liveness is None:
+        enforce_liveness = ANTISPOOF
+    if enforce_liveness:
+        score = liveness_score(used_image, face_location)
+        if score < ANTISPOOF_MIN_SCORE:
+            raise SpoofDetectedError(
+                f"Liveness check failed (score={score:.2f} < {ANTISPOOF_MIN_SCORE:.2f}). "
+                "Please look directly at the camera in good lighting."
+            )
+
+    return extract_face_embedding(used_image, face_location)
+
+
+# ── Distance / confidence ──────────────────────────────────────────────
 
 def calculate_face_distance(embedding1: List[float], embedding2: List[float]) -> float:
-    """
-    Calculate distance between two face embeddings.
-    
-    Args:
-        embedding1: First face embedding
-        embedding2: Second face embedding
-    
-    Returns:
-        Euclidean distance (lower = more similar)
-    
-    Note:
-        - Distance < 0.6: Likely same person
-        - Distance 0.6-1.0: Uncertain, may need manual verification
-        - Distance > 1.0: Likely different people
-    
-    Current: Uses Euclidean distance (L2 norm)
-    Database: Uses cosine distance for similarity search
-    
-    TODO: Standardize on single distance metric (cosine is generally better)
-    TODO: Add confidence calibration based on data distribution
-    """
-    # Convert to numpy arrays for efficient computation
-    emb1 = np.array(embedding1)
-    emb2 = np.array(embedding2)
-    
-    # Calculate Euclidean distance
-    distance = np.linalg.norm(emb1 - emb2)
-    
-    return float(distance)
+    """Euclidean (L2) distance between two embeddings (lower = more similar)."""
+    emb1 = np.asarray(embedding1, dtype=np.float64)
+    emb2 = np.asarray(embedding2, dtype=np.float64)
+    return float(np.linalg.norm(emb1 - emb2))
 
 
 def get_confidence_level(distance: float) -> str:
     """
-    Convert distance to human-readable confidence level.
-    
-    Args:
-        distance: Cosine distance from pgvector (0.0 = identical, 2.0 = opposite)
-    
-    Returns:
-        Confidence level: "high", "medium", or "low"
-    
-    Thresholds based on empirical testing with dlib embeddings:
-    - < 0.35: High confidence (very likely same person)
-    - 0.35-0.45: Medium confidence (likely same person, but verify)
-    - > 0.45: Low confidence (likely different person)
-    
-    TODO: Implement adaptive thresholds based on user-specific data
-    TODO: Add confidence scores calibrated on validation dataset
+    Map an L2 distance (matching the DB `<->` query) to a confidence label.
+
+    dlib/face_recognition embeddings: same-person L2 distances are typically
+    well under ~0.4, the library's default decision tolerance is 0.6.
+
+    - < 0.35: high
+    - 0.35-0.45: medium
+    - >= 0.45: low
     """
     if distance < 0.35:
         return "high"
     elif distance < 0.45:
         return "medium"
-    else:
-        return "low"
-
-
-# TODO: Implement GPU acceleration support
-#       - Check if CUDA is available
-#       - Use GPU-optimized models (CNN detector, TensorRT inference)
-#       - Batch processing for multiple images
-
-# TODO: Add liveness detection to prevent spoofing attacks
-#       Approaches:
-#       1. Blink detection (require user to blink)
-#       2. Head movement (ask user to turn head)
-#       3. Depth-based (use depth camera data)
-#       4. Challenge-response (random actions)
-#       5. Passive (texture analysis, frequency domain analysis)
-
-# TODO: Add face image quality assessment
-#       - Sharpness/blur detection
-#       - Lighting quality
-#       - Face pose/angle
-#       - Occlusion detection (sunglasses, mask, hand)
-
-# TODO: Add support for face tracking in video streams
-#       - Maintain face IDs across frames
-#       - Smooth recognition results over time
-#       - Handle temporary occlusions
-
-# TODO: Implement ensemble models for better accuracy
-#       - Combine multiple embedding models
-#       - Weighted voting for final decision
-
+    return "low"

@@ -163,14 +163,24 @@ def _apply_schema():
             logger.debug(f"Column migration skipped: {e}")
 
     with engine.connect() as connection:
+        # The recognition query uses the L2 operator (`<->`), so the index
+        # MUST use vector_l2_ops to be usable by the planner. The previous
+        # cosine index (vector_cosine_ops) was silently ignored by the L2
+        # query, forcing a full sequential scan on every recognition.
+        #
+        # `lists` is tuned to the row count: a good rule of thumb is
+        # rows/1000 (min 1), capped so small datasets don't over-partition.
+        row_count = connection.execute(text("SELECT COUNT(*) FROM users")).scalar() or 0
+        lists = max(1, min(1000, int((row_count or 1) ** 0.5) * 2))
+
         connection.execute(text("DROP INDEX IF EXISTS users_embedding_idx"))
         connection.execute(text(
-            "CREATE INDEX users_embedding_idx ON users "
-            "USING ivfflat (embedding vector_cosine_ops) "
-            "WITH (lists = 100)"
+            f"CREATE INDEX users_embedding_idx ON users "
+            f"USING ivfflat (embedding vector_l2_ops) "
+            f"WITH (lists = {lists})"
         ))
         connection.commit()
-        logger.info("✓ Vector similarity index created")
+        logger.info(f"✓ Vector similarity index created (ivfflat l2, lists={lists})")
 
 
 # ── Auto-recovery ─────────────────────────────────────────────────────
@@ -256,14 +266,27 @@ def init_db():
 
 # ── Query helpers ─────────────────────────────────────────────────────
 
+# Number of IVFFlat lists probed per query. Higher = better recall (fewer
+# false negatives) at a small latency cost. 10 is a good recall/speed balance.
+IVFFLAT_PROBES = int(os.getenv("IVFFLAT_PROBES", "10"))
+
+
 def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0.45, limit: int = 1):
     """
-    Find similar faces using pgvector cosine-distance search.
+    Find similar faces using pgvector L2-distance search (operator `<->`,
+    matched by the ivfflat vector_l2_ops index).
 
-    Returns list of (User, distance) tuples.  Empty list if no matches
-    within threshold.
+    Returns a list of (User, distance) tuples, ordered nearest-first. Empty
+    list if nothing is within `threshold`.
     """
     embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+
+    # Tune probes for this session so the IVFFlat index returns high recall.
+    try:
+        db.execute(text(f"SET LOCAL ivfflat.probes = {IVFFLAT_PROBES}"))
+    except Exception:
+        # Older pgvector or non-ivfflat plans: safe to ignore.
+        pass
 
     query = text("""
         SELECT id, name, embedding, created_at, visit_count, last_visit_at,
@@ -292,6 +315,18 @@ def find_similar_faces(db: Session, embedding: List[float], threshold: float = 0
         matches.append((user, float(row.distance)))
 
     return matches
+
+
+def find_duplicate_face(db: Session, embedding: List[float], threshold: float = 0.32):
+    """
+    Check whether a face is already enrolled (prevents the same person from
+    registering twice under different names).
+
+    Uses a stricter threshold than recognition so only near-identical faces
+    are flagged. Returns (User, distance) for the closest match or None.
+    """
+    matches = find_similar_faces(db, embedding, threshold=threshold, limit=1)
+    return matches[0] if matches else None
 
 
 VISIT_COOLDOWN_MINUTES = 30

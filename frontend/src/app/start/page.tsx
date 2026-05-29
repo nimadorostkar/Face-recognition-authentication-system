@@ -122,7 +122,7 @@ export default function EnergyEfficientStartPage() {
           recognitionInterval: 1500,
           cooldownDuration: 3000,
           cooldownFPS: 5,
-          maxRecognitionTime: 30000,
+          maxRecognitionTime: 7000,
         });
 
         // Start main processing loop
@@ -701,7 +701,7 @@ export default function EnergyEfficientStartPage() {
     }
 
     typingStartedRef.current = true;
-    const fullText = "Hi, I'm Avro";
+    const fullText = "Look at me";
     const words = fullText.split(' ');
     let currentWordIndex = 0;
     let currentCharIndex = 0;
@@ -1049,12 +1049,8 @@ export default function EnergyEfficientStartPage() {
           setShowPostSuccess(true);
           setFadeIn(false);
         }, 2000);
-
-        // Restart page after post-success screen completes
-        restartTimerRef.current = setTimeout(() => {
-          console.log('[System] Restarting after success flow...');
-          window.location.reload();
-        }, 25000);
+        // NOTE: page reload is handled by the restart useEffect once
+        // showPostSuccess becomes true (12s), so no extra timer is set here.
       }, 100);
           }, 300);
 
