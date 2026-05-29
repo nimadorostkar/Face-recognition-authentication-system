@@ -74,6 +74,11 @@ def _env_bool(name: str, default: bool) -> bool:
 DETECTION_MODEL = os.getenv("FACE_DETECTION_MODEL", "hog")
 DETECT_UPSAMPLE = _env_int("FACE_DETECT_UPSAMPLE", 1)
 MAX_DIM = _env_int("FACE_MAX_DIM", 1024)
+# Detection runs on a downscaled copy for speed (HOG cost grows with pixel
+# count). The embedding is still extracted from the full-resolution image, so
+# stored embeddings stay comparable. 640px keeps a centered webcam face well
+# above the detector's minimum while roughly halving detection latency.
+DETECT_MAX_DIM = _env_int("FACE_DETECT_MAX_DIM", 640)
 ENHANCE_FALLBACK = _env_bool("FACE_ENHANCE_FALLBACK", True)
 NUM_JITTERS = max(1, _env_int("FACE_NUM_JITTERS", 1))
 QUALITY_GATE = os.getenv("FACE_QUALITY_GATE", "register").strip().lower()
@@ -217,31 +222,78 @@ def _largest_face(boxes: List[Tuple[int, int, int, int]]) -> Tuple[int, int, int
     return max(boxes, key=_box_area)
 
 
+def _downscale_for_detection(image: np.ndarray) -> Tuple[np.ndarray, float]:
+    """
+    Return a (possibly) downscaled copy of the image for fast detection plus
+    the scale factor applied (small_dim = scale * full_dim).  Detection on a
+    smaller image is dramatically cheaper for the HOG detector; boxes are
+    mapped back to full resolution before embedding extraction.
+    """
+    h, w = image.shape[:2]
+    longest = max(h, w)
+    if not DETECT_MAX_DIM or longest <= DETECT_MAX_DIM:
+        return image, 1.0
+    scale = DETECT_MAX_DIM / float(longest)
+    small = cv2.resize(
+        image,
+        (int(round(w * scale)), int(round(h * scale))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return small, scale
+
+
+def _rescale_boxes(
+    boxes: List[Tuple[int, int, int, int]],
+    scale: float,
+    bounds: Tuple[int, int],
+) -> List[Tuple[int, int, int, int]]:
+    """Map detection boxes from the downscaled image back to full resolution."""
+    if scale == 1.0:
+        return boxes
+    h, w = bounds
+    inv = 1.0 / scale
+    out = []
+    for top, right, bottom, left in boxes:
+        out.append((
+            max(0, min(h, int(round(top * inv)))),
+            max(0, min(w, int(round(right * inv)))),
+            max(0, min(h, int(round(bottom * inv)))),
+            max(0, min(w, int(round(left * inv)))),
+        ))
+    return out
+
+
 def detect_faces_robust(image: np.ndarray) -> Tuple[np.ndarray, List[Tuple[int, int, int, int]]]:
     """
-    Multi-stage detection that returns the image actually used and the boxes
-    found.  Stages escalate only when needed, so the common case stays fast
-    and embedding-consistent with previously enrolled users:
+    Multi-stage detection that returns the full-resolution image actually used
+    and boxes in full-resolution coordinates.  Detection itself runs on a
+    downscaled copy for speed; the embedding is always extracted from the
+    full-res image so it stays comparable with previously enrolled users.
 
-      1. Normal detection (original behaviour).
+    Stages escalate only when needed, so the common case stays fast:
+      1. Normal detection on the downscaled frame (fast path).
       2. Extra upsampling pass (small / angled faces).
       3. CLAHE low-light enhancement + upsampling (dim frames).
     """
-    boxes = detect_faces(image)
+    bounds = image.shape[:2]
+    small, scale = _downscale_for_detection(image)
+
+    boxes = detect_faces(small)
     if boxes:
-        return image, boxes
+        return image, _rescale_boxes(boxes, scale, bounds)
 
     # Stage 2: more upsampling (helps small/angled faces).
-    boxes = detect_faces(image, upsample=DETECT_UPSAMPLE + 1)
+    boxes = detect_faces(small, upsample=DETECT_UPSAMPLE + 1)
     if boxes:
-        return image, boxes
+        return image, _rescale_boxes(boxes, scale, bounds)
 
-    # Stage 3: low-light enhancement fallback.
+    # Stage 3: low-light enhancement fallback (on full image, then downscale).
     if ENHANCE_FALLBACK:
         enhanced = enhance_for_lowlight(image)
-        boxes = detect_faces(enhanced, upsample=DETECT_UPSAMPLE + 1)
+        e_small, e_scale = _downscale_for_detection(enhanced)
+        boxes = detect_faces(e_small, upsample=DETECT_UPSAMPLE + 1)
         if boxes:
-            return enhanced, boxes
+            return enhanced, _rescale_boxes(boxes, e_scale, enhanced.shape[:2])
 
     return image, []
 
