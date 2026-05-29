@@ -46,11 +46,6 @@ export default function EnergyEfficientStartPage() {
   const postSuccessPhaseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const goFadeTimerRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Animated word sequence state for blue.gif
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [wordOpacity, setWordOpacity] = useState(1);
-  const wordSequenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   // Typing effect state for "Hi, I'm Avro AI" text
   const [typingText, setTypingText] = useState('');
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -165,9 +160,6 @@ export default function EnergyEfficientStartPage() {
       }
       awTimersRef.current.forEach((t) => clearTimeout(t));
       awTimersRef.current = [];
-      if (wordSequenceTimerRef.current) {
-        clearTimeout(wordSequenceTimerRef.current);
-      }
       if (restartTimerRef.current) {
         clearTimeout(restartTimerRef.current);
       }
@@ -191,59 +183,6 @@ export default function EnergyEfficientStartPage() {
       }
     };
   }, []);
-
-  /**
-   * Animated word sequence effect for blue.gif
-   */
-  useEffect(() => {
-    if (!showPostSuccess) {
-      return;
-    }
-
-    // Word sequence: "Hi" → userName → "welcome" → reg.png (stops here)
-    const sequence = ['Hi', userName || 'Guest', 'welcome', 'reg.png'];
-    const FADE_DURATION = 300; // ms - faster fade
-    const DISPLAY_DURATION = 800; // ms - shorter display (faster overall)
-
-    function cycleWord() {
-      setCurrentWordIndex((prev) => {
-        const nextIndex = prev + 1;
-        
-        // Stop at reg.png (last item)
-        if (nextIndex >= sequence.length) {
-          // Clear the interval to stop the loop
-          if (wordSequenceTimerRef.current) {
-            clearInterval(wordSequenceTimerRef.current);
-          }
-          return prev; // Stay at reg.png
-        }
-        
-        // Fade out
-        setWordOpacity(0);
-        
-        setTimeout(() => {
-          // Change word
-          setCurrentWordIndex(nextIndex);
-          
-          // Fade in
-          setTimeout(() => {
-            setWordOpacity(1);
-          }, 50);
-        }, FADE_DURATION);
-        
-        return prev;
-      });
-    }
-
-    // Start the sequence
-    wordSequenceTimerRef.current = setInterval(cycleWord, FADE_DURATION + DISPLAY_DURATION);
-
-    return () => {
-      if (wordSequenceTimerRef.current) {
-        clearInterval(wordSequenceTimerRef.current);
-      }
-    };
-  }, [showPostSuccess, userName]);
 
   /**
    * Post-success phase transition: go.gif (2s with fade) → bg.jpeg (10s)
