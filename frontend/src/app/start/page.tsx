@@ -61,28 +61,14 @@ export default function EnergyEfficientStartPage() {
   const failTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const failTypingStartedRef = useRef<boolean>(false);
 
-  // Typing effect state for welcome text on bg.jpeg
-  const [welcomeTypingLine1, setWelcomeTypingLine1] = useState('');
-  const [welcomeTypingLine2, setWelcomeTypingLine2] = useState('');
-  const [welcomeTypingLine3, setWelcomeTypingLine3] = useState('');
-  const welcomeTypingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const welcomeTextRef = useRef<string>('');
+  // Avro welcome (orb) animation timers for the post-success bg phase
+  const awTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
-  const welcomeTexts = [
-    'حضور شما این فضا را خاص‌تر می‌کند.',
-    'با آمدنت، حال‌وهوای اینجا تغییر می‌کند.',
-    'حضورت یعنی کیفیت معنا پیدا می‌کند.',
-    'با حضور شما، اینجا گرم‌تر می‌شود.',
-    'تو ارزش یه حالِ خوب واقعی رو داری.',
-    'حضورت یعنی یک دلیل تازه برای لبخند.',
-    'با حضور تو، اینجا زنده‌تر می‌شود.',
-    'شما شایسته بهترین پذیرایی هستید.',
-    'حضورت یعنی یک حس خوبِ ماندگار.',
-    'تو لیاقت بهترین انتخاب‌ها رو داری.',
-  ];
-  
   // Restart timer - reload page after completion
   const restartTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Avro welcome (orb) container ref for the post-success bg phase
+  const avroRef = useRef<HTMLDivElement>(null);
 
   // Motion persistence tracking
   const motionCounterRef = useRef<number>(0);
@@ -177,9 +163,8 @@ export default function EnergyEfficientStartPage() {
       if (goFadeTimerRef.current) {
         clearTimeout(goFadeTimerRef.current);
       }
-      if (welcomeTypingTimerRef.current) {
-        clearTimeout(welcomeTypingTimerRef.current);
-      }
+      awTimersRef.current.forEach((t) => clearTimeout(t));
+      awTimersRef.current = [];
       if (wordSequenceTimerRef.current) {
         clearTimeout(wordSequenceTimerRef.current);
       }
@@ -291,66 +276,157 @@ export default function EnergyEfficientStartPage() {
   }, [showPostSuccess]);
 
   /**
-   * Typing effect for welcome text on bg.jpeg phase
+   * Avro welcome (orb) animations for the post-success bg phase:
+   * count-up badge, typewriter visit/reward lines, particles, live clock.
    */
   useEffect(() => {
     if (postSuccessPhase !== 'bg' || !showPostSuccess) {
-      setWelcomeTypingLine1('');
-      setWelcomeTypingLine2('');
-      setWelcomeTypingLine3('');
       return;
     }
 
-    // Pick a random welcome text once
-    if (!welcomeTextRef.current) {
-      welcomeTextRef.current = welcomeTexts[Math.floor(Math.random() * welcomeTexts.length)];
+    const root = avroRef.current;
+    if (!root) {
+      return;
     }
 
-    const line1 = `سلام ${userName || 'کاربر'}، خوش اومدی`;
-    const line2 = welcomeTextRef.current;
-    const line3 = ` 😍 این ${visitCount} امین باره که پیش مایی! مرسی که کنار مایی ❤️`;
-    let charIndex = 0;
-    let currentLine = 1;
-    const line1Chars = [...line1];
-    const line2Chars = [...line2];
-    const line3Chars = [...line3];
+    // Loyalty / reward config
+    const REWARD_EVERY = 5;
+    const REWARD = 'coffee';
+    const visits = visitCount;
 
-    function typeNext() {
-      if (currentLine === 1) {
-        if (charIndex < line1Chars.length) {
-          setWelcomeTypingLine1(line1Chars.slice(0, charIndex + 1).join(''));
-          charIndex++;
-          welcomeTypingTimerRef.current = setTimeout(typeNext, 80);
-        } else {
-          currentLine = 2;
-          charIndex = 0;
-          welcomeTypingTimerRef.current = setTimeout(typeNext, 400);
-        }
-      } else if (currentLine === 2) {
-        if (charIndex < line2Chars.length) {
-          setWelcomeTypingLine2(line2Chars.slice(0, charIndex + 1).join(''));
-          charIndex++;
-          welcomeTypingTimerRef.current = setTimeout(typeNext, 60);
-        } else {
-          currentLine = 3;
-          charIndex = 0;
-          welcomeTypingTimerRef.current = setTimeout(typeNext, 400);
-        }
-      } else {
-        if (charIndex < line3Chars.length) {
-          setWelcomeTypingLine3(line3Chars.slice(0, charIndex + 1).join(''));
-          charIndex++;
-          welcomeTypingTimerRef.current = setTimeout(typeNext, 60);
-        }
+    const ordinal = (n: number) => {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+
+    const milestone = visits > 0 && visits % 10 === 0;
+    const inCycle = visits % REWARD_EVERY;
+    const filled = inCycle === 0 && visits > 0 ? REWARD_EVERY : inCycle;
+    const remaining = REWARD_EVERY - filled;
+    const unlocked = remaining === 0;
+
+    const visitLine = `Your ${ordinal(visits)} visit ${milestone ? '— a milestone' : 'at Avro'}`;
+    const rewardLine = unlocked
+      ? `Reward unlocked — your next ${REWARD} is on us`
+      : `Just ${remaining} more ${remaining === 1 ? 'visit' : 'visits'} to a free ${REWARD}`;
+
+    const timers = awTimersRef.current;
+    const track = (t: ReturnType<typeof setTimeout>) => {
+      timers.push(t);
+      return t;
+    };
+
+    // ---- loyalty stamps ----
+    const stampsBox = root.querySelector<HTMLElement>('#aw-stamps');
+    if (stampsBox) {
+      stampsBox.innerHTML = '';
+      for (let i = 0; i < REWARD_EVERY; i++) {
+        const s = document.createElement('span');
+        s.className = 'aw-stamp' + (i < filled ? ' on' : '');
+        s.style.animationDelay = 1.0 + i * 0.13 + 's';
+        stampsBox.appendChild(s);
       }
     }
 
-    welcomeTypingTimerRef.current = setTimeout(typeNext, 300);
+    // ---- count-up badge ----
+    const badge = root.querySelector<HTMLElement>('#aw-badge');
+    if (badge) {
+      const ms = 1100;
+      const start = performance.now();
+      const tick = (now: number) => {
+        const p = Math.min(1, (now - start) / ms);
+        const e = 1 - Math.pow(1 - p, 3);
+        badge.textContent = String(Math.round(visits * e));
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+
+    // ---- typewriter ----
+    const typeInto = (
+      el: HTMLElement,
+      text: string,
+      cps: number,
+      sparkle: boolean,
+      done?: () => void
+    ) => {
+      const span = document.createElement('span');
+      const caret = document.createElement('span');
+      caret.className = 'aw-caret';
+      el.innerHTML = '';
+      el.appendChild(span);
+      el.appendChild(caret);
+      let i = 0;
+      const step = () => {
+        i = Math.min(text.length, i + 1);
+        span.textContent = text.slice(0, i);
+        if (i < text.length) {
+          track(setTimeout(step, 1000 / cps));
+        } else {
+          if (caret.parentNode) caret.remove();
+          if (sparkle) {
+            const sp = document.createElement('span');
+            sp.className = 'aw-spark';
+            sp.textContent = ' ✦';
+            el.appendChild(sp);
+          }
+          if (done) done();
+        }
+      };
+      track(setTimeout(step, 1000 / cps));
+    };
+
+    const visitEl = root.querySelector<HTMLElement>('#aw-visit-text');
+    const rewardEl = root.querySelector<HTMLElement>('#aw-loyalty-text');
+    if (visitEl && rewardEl) {
+      typeInto(visitEl, visitLine, 26, milestone, () => {
+        typeInto(rewardEl, rewardLine, 30, true);
+      });
+    }
+
+    // ---- live clock ----
+    const clockEl = root.querySelector<HTMLElement>('#aw-clock');
+    let clockInterval: ReturnType<typeof setInterval> | null = null;
+    if (clockEl) {
+      const tickClock = () => {
+        const d = new Date();
+        const h = d.getHours();
+        const m = d.getMinutes();
+        const ap = h < 12 ? 'AM' : 'PM';
+        const hh = ((h + 11) % 12) + 1;
+        clockEl.textContent = hh + ':' + (m < 10 ? '0' + m : m) + ' ' + ap;
+      };
+      tickClock();
+      clockInterval = setInterval(tickClock, 10000);
+    }
+
+    // ---- drifting particles ----
+    const particles = root.querySelector<HTMLElement>('.aw-particles');
+    if (particles) {
+      particles.innerHTML = '';
+      const N = 26;
+      for (let i = 0; i < N; i++) {
+        const p = document.createElement('span');
+        p.className = 'aw-pt';
+        const size = 1.5 + Math.random() * 3.5;
+        p.style.width = size + 'px';
+        p.style.height = size + 'px';
+        p.style.left = Math.random() * 100 + '%';
+        p.style.top = 55 + Math.random() * 45 + '%';
+        p.style.setProperty('--pt-op', (0.25 + Math.random() * 0.5).toFixed(2));
+        const dur = 9 + Math.random() * 12;
+        p.style.animationDuration = dur + 's, ' + dur + 's';
+        p.style.animationDelay =
+          '-' + (Math.random() * dur).toFixed(1) + 's, -' + (Math.random() * dur).toFixed(1) + 's';
+        particles.appendChild(p);
+      }
+    }
 
     return () => {
-      if (welcomeTypingTimerRef.current) {
-        clearTimeout(welcomeTypingTimerRef.current);
-      }
+      timers.forEach((t) => clearTimeout(t));
+      awTimersRef.current = [];
+      if (clockInterval) clearInterval(clockInterval);
     };
   }, [postSuccessPhase, showPostSuccess, userName, visitCount]);
 
@@ -399,6 +475,263 @@ export default function EnergyEfficientStartPage() {
       @keyframes menuScroll {
         0% { transform: translateX(0); }
         100% { transform: translateX(-50%); }
+      }
+
+      /* ============ Avro Welcome (post-success bg phase) ============ */
+      .avro-welcome {
+        --bg-0: #03060d;
+        --bg-1: #081120;
+        --ink: #eaf3fb;
+        --ink-soft: rgba(234, 243, 251, 0.64);
+        --ink-faint: rgba(234, 243, 251, 0.34);
+        --c-core: #eafdff;
+        --c-amber: #5fb8ff;
+        --c-rose: #4fe3e0;
+        --c-violet: #6f7dff;
+        --c-cyan: #9af2ff;
+        --speed: 1;
+        --orb: clamp(190px, 34vmin, 460px);
+
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        color: var(--ink);
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        background: radial-gradient(120% 100% at 50% 38%, var(--bg-1) 0%, var(--bg-0) 55%, #02040a 100%);
+      }
+      .avro-welcome *, .avro-welcome *::before, .avro-welcome *::after { box-sizing: border-box; }
+
+      .avro-welcome::before {
+        content: "";
+        position: absolute;
+        inset: -10%;
+        background:
+          radial-gradient(40% 40% at 30% 30%, rgba(95,184,255,0.11), transparent 70%),
+          radial-gradient(45% 45% at 72% 70%, rgba(111,125,255,0.11), transparent 70%);
+        filter: blur(20px);
+        pointer-events: none;
+      }
+      .avro-welcome::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,0.55) 100%);
+        pointer-events: none;
+        z-index: 40;
+      }
+
+      .aw-grain {
+        position: absolute; inset: 0; z-index: 41;
+        opacity: 0.05; mix-blend-mode: overlay; pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      .aw-orb-label {
+        position: absolute; inset: 0; z-index: 6;
+        display: flex; align-items: center; justify-content: center;
+        pointer-events: none;
+        animation: awLabelIn 1.3s cubic-bezier(.2,.7,.2,1) 0.55s both;
+      }
+      .aw-orb-label b {
+        font-weight: 700; font-size: clamp(26px, 5vmin, 60px);
+        letter-spacing: 0.16em; padding-left: 0.16em;
+        color: rgba(7,17,30,0.88);
+        text-shadow: 0 0 1px rgba(255,255,255,0.35), 0 1px 16px rgba(255,255,255,0.25);
+      }
+      @keyframes awLabelIn { from { transform: scale(0.82); } to { transform: scale(1); } }
+
+      .aw-status {
+        position: absolute; bottom: clamp(20px, 4vmin, 60px); left: clamp(20px, 4vw, 72px);
+        z-index: 30; display: flex; align-items: center; gap: 12px;
+        font-size: clamp(11px, 1.5vmin, 17px); letter-spacing: 0.16em;
+        color: var(--ink-faint); text-transform: uppercase;
+      }
+      .aw-status .aw-tick {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; border-radius: 50%;
+        border: 1px solid rgba(154,242,255,0.55); color: var(--c-cyan); font-size: 12px;
+      }
+      .aw-wave { display: inline-flex; align-items: center; gap: 3px; height: 20px; margin-left: 6px; }
+      .aw-wave i {
+        display: block; width: 3px; height: 30%; border-radius: 2px;
+        background: var(--c-cyan); box-shadow: 0 0 8px -1px var(--c-cyan);
+        animation: awEq calc(1.1s / var(--speed)) ease-in-out infinite;
+      }
+      .aw-wave i:nth-child(1){ animation-delay: -.9s; }
+      .aw-wave i:nth-child(2){ animation-delay: -.2s; }
+      .aw-wave i:nth-child(3){ animation-delay: -.6s; }
+      .aw-wave i:nth-child(4){ animation-delay: -.1s; }
+      .aw-wave i:nth-child(5){ animation-delay: -.7s; }
+      .aw-wave i:nth-child(6){ animation-delay: -.35s; }
+      .aw-wave i:nth-child(7){ animation-delay: -.5s; }
+      @keyframes awEq { 0%,100% { height: 22%; opacity: .55; } 50% { height: 100%; opacity: 1; } }
+
+      .aw-clock {
+        position: absolute; bottom: clamp(20px, 4vmin, 60px); right: clamp(20px, 4vw, 72px);
+        z-index: 30; font-size: clamp(11px, 1.5vmin, 17px); letter-spacing: 0.16em;
+        color: var(--ink-faint); font-variant-numeric: tabular-nums;
+      }
+
+      .aw-content {
+        position: absolute; inset: 0; z-index: 20;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: clamp(14px, 3vmin, 30px);
+      }
+      .aw-greeting { text-align: center; }
+      .aw-eyebrow {
+        font-size: clamp(14px, 2.4vmin, 26px); letter-spacing: 0.18em;
+        text-transform: uppercase; color: var(--ink-soft);
+        animation: awRise 1s cubic-bezier(.2,.7,.2,1) 0.25s both;
+      }
+      .aw-name {
+        font-size: clamp(48px, 11vmin, 150px); line-height: 0.98; font-weight: 300;
+        letter-spacing: -0.02em; margin-top: clamp(6px, 1.4vmin, 14px);
+        background: linear-gradient(110deg, #ffffff 0%, #dbeeff 32%, #ffffff 48%, #b9d6f5 62%, #dbeeff 100%);
+        background-size: 220% 100%;
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        animation: awRise 1.1s cubic-bezier(.2,.7,.2,1) 0.42s both, awShimmer calc(7s / var(--speed)) ease-in-out 1.4s infinite;
+      }
+      @keyframes awShimmer { 0%,100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+
+      .aw-visit {
+        display: inline-flex; align-items: center; gap: clamp(10px, 1.6vmin, 16px);
+        padding: clamp(10px,1.6vmin,16px) clamp(18px,3vmin,30px) clamp(10px,1.6vmin,16px) clamp(14px,2.2vmin,22px);
+        border-radius: 999px; font-size: clamp(15px, 2.2vmin, 25px); letter-spacing: 0.01em;
+        color: var(--ink); background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,255,255,0.10); backdrop-filter: blur(8px);
+        box-shadow: 0 0 0 1px rgba(95,184,255,0.08), 0 18px 60px -20px rgba(111,125,255,0.40);
+        animation: awRise 1.1s cubic-bezier(.2,.7,.2,1) 0.62s both;
+      }
+      .aw-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: clamp(34px,4.6vmin,50px); height: clamp(34px,4.6vmin,50px); padding: 0 clamp(8px,1.3vmin,14px);
+        border-radius: 999px; font-size: clamp(18px,2.5vmin,27px); font-weight: 600;
+        color: #04141f; background: radial-gradient(120% 120% at 30% 25%, #eafdff, var(--c-amber) 70%);
+        box-shadow: 0 0 22px -2px var(--c-amber);
+      }
+      .aw-visit-text { min-height: 1em; }
+
+      .aw-caret {
+        display: inline-block; width: 2px; height: 1.05em; margin-left: 4px;
+        vertical-align: -0.16em; border-radius: 2px; background: var(--c-cyan);
+        box-shadow: 0 0 10px -1px var(--c-cyan);
+        animation: awCaretBlink calc(0.9s / var(--speed)) steps(1, end) infinite;
+      }
+      @keyframes awCaretBlink { 0%,49%{ opacity: 1; } 50%,100%{ opacity: 0; } }
+
+      .aw-loyalty {
+        display: flex; flex-direction: column; align-items: center;
+        gap: clamp(10px, 1.8vmin, 16px); margin-top: clamp(16px, 3vmin, 30px);
+        animation: awRise 1.1s cubic-bezier(.2,.7,.2,1) 0.82s both;
+      }
+      .aw-stamps { display: flex; gap: clamp(8px, 1.4vmin, 13px); }
+      .aw-stamp {
+        width: clamp(10px, 1.5vmin, 15px); height: clamp(10px, 1.5vmin, 15px);
+        border-radius: 50%; border: 1px solid rgba(154,242,255,0.30); background: rgba(154,242,255,0.04);
+      }
+      .aw-stamp.on {
+        border-color: transparent;
+        background: radial-gradient(circle at 40% 35%, var(--c-core), var(--c-amber) 72%);
+        box-shadow: 0 0 13px -1px var(--c-amber);
+        animation: awStampPop .55s cubic-bezier(.2,1.5,.4,1) both;
+      }
+      @keyframes awStampPop { from { transform: scale(0.2); } to { transform: scale(1); } }
+      .aw-loyalty-label { font-size: clamp(14px, 2vmin, 22px); letter-spacing: 0.02em; color: var(--ink-soft); }
+      .aw-loyalty-label b { color: var(--ink); font-weight: 600; }
+      .aw-loyalty-label .aw-spark { color: var(--c-cyan); }
+      @keyframes awRise { from { transform: translateY(26px); } to { transform: translateY(0); } }
+
+      .aw-orbStage { display: flex; justify-content: center; margin-bottom: 6px; will-change: transform; }
+      .aw-orbWrap {
+        position: relative; width: var(--orb); height: var(--orb); margin-bottom: 6px;
+        animation: awOrbIn 1.6s cubic-bezier(.2,.7,.2,1) 0s both; will-change: transform;
+      }
+      @keyframes awOrbIn { from { transform: scale(.72);} to { transform: scale(1);} }
+      .aw-orbWrap::after {
+        content: ""; position: absolute; inset: -22%; border-radius: 50%;
+        background: radial-gradient(closest-side, rgba(95,184,255,0.30), rgba(111,125,255,0.14) 55%, transparent 72%);
+        filter: blur(34px); z-index: -1; animation: awBreathe calc(6.5s / var(--speed)) ease-in-out infinite;
+      }
+      .aw-orb {
+        position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+        -webkit-mask: radial-gradient(closest-side, #000 62%, rgba(0,0,0,0.55) 84%, transparent 100%);
+        mask: radial-gradient(closest-side, #000 62%, rgba(0,0,0,0.55) 84%, transparent 100%);
+        box-shadow: inset 0 0 70px 10px rgba(0,0,0,0.55);
+        animation: awBreathe calc(6.5s / var(--speed)) ease-in-out infinite;
+      }
+      @keyframes awBreathe { 0%,100%{ transform: scale(1);} 50%{ transform: scale(1.035);} }
+      .aw-liquid { position: absolute; inset: -30%; filter: blur(26px) saturate(140%); }
+      .aw-blob { position: absolute; border-radius: 50%; mix-blend-mode: screen; will-change: transform; }
+      .aw-b1 { width: 64%; height: 64%; left: 8%; top: 6%; background: radial-gradient(circle at 40% 40%, var(--c-amber), transparent 68%); animation: awDrift1 calc(12s / var(--speed)) ease-in-out infinite; }
+      .aw-b2 { width: 58%; height: 58%; right: 4%; top: 14%; background: radial-gradient(circle at 50% 50%, var(--c-rose), transparent 66%); animation: awDrift2 calc(15s / var(--speed)) ease-in-out infinite; }
+      .aw-b3 { width: 66%; height: 66%; left: 12%; bottom: 2%; background: radial-gradient(circle at 50% 50%, var(--c-violet), transparent 66%); animation: awDrift3 calc(17s / var(--speed)) ease-in-out infinite; }
+      .aw-b4 { width: 40%; height: 40%; right: 14%; bottom: 14%; background: radial-gradient(circle at 50% 50%, var(--c-cyan), transparent 64%); animation: awDrift4 calc(13s / var(--speed)) ease-in-out infinite; }
+      .aw-core {
+        position: absolute; width: 46%; height: 46%; left: 27%; top: 25%; border-radius: 50%;
+        background: radial-gradient(circle at 50% 45%, rgba(255,245,230,0.95), rgba(255,210,150,0.5) 40%, transparent 70%);
+        mix-blend-mode: screen; filter: blur(8px); animation: awBreathe calc(5.2s / var(--speed)) ease-in-out infinite;
+      }
+      .aw-sheen {
+        position: absolute; inset: -10%; border-radius: 50%;
+        background: conic-gradient(from 0deg, transparent 0deg, rgba(255,255,255,0.12) 40deg, transparent 120deg, rgba(255,79,134,0.10) 220deg, transparent 320deg);
+        mix-blend-mode: screen; animation: awSpin calc(22s / var(--speed)) linear infinite;
+      }
+      .aw-rim {
+        position: absolute; inset: 0; border-radius: 50%;
+        background: radial-gradient(120% 120% at 32% 22%, rgba(255,255,255,0.22), transparent 38%);
+        mix-blend-mode: screen; pointer-events: none;
+      }
+      .aw-scan-ring {
+        position: absolute; inset: -11%; border-radius: 50%; border: 1px solid rgba(255,255,255,0.07);
+        animation: awSpin calc(9s / var(--speed)) linear infinite; pointer-events: none;
+      }
+      .aw-comet {
+        position: absolute; top: -4px; left: 50%; width: 8px; height: 8px; margin-left: -4px;
+        border-radius: 50%; background: var(--c-cyan);
+        box-shadow: 0 0 16px 3px var(--c-cyan), 0 0 40px 6px var(--c-cyan);
+      }
+      .aw-ring-dashed {
+        position: absolute; inset: -19%; border-radius: 50%; border: 1px dashed rgba(255,255,255,0.06);
+        animation: awSpin calc(38s / var(--speed)) linear infinite reverse; pointer-events: none;
+      }
+      .aw-comet.c2 {
+        top: auto; bottom: -3px; width: 6px; height: 6px; margin-left: -3px; background: var(--c-violet);
+        box-shadow: 0 0 14px 3px var(--c-violet), 0 0 32px 5px var(--c-violet);
+      }
+      .aw-scanner {
+        position: absolute; inset: 0; border-radius: 50%;
+        background: conic-gradient(from 0deg, transparent 0deg, rgba(154,242,255,0.0) 70deg, rgba(154,242,255,0.30) 90deg, rgba(255,255,255,0.55) 96deg, transparent 100deg);
+        mix-blend-mode: screen; animation: awSpin calc(5.5s / var(--speed)) linear infinite; pointer-events: none;
+      }
+      .aw-ping {
+        position: absolute; inset: 4%; border-radius: 50%; border: 1px solid rgba(154,242,255,0.45);
+        opacity: 0; animation: awPing calc(4.8s / var(--speed)) cubic-bezier(.2,.6,.3,1) infinite; pointer-events: none;
+      }
+      .aw-ping.p2 { animation-delay: calc(1.6s / var(--speed)); }
+      .aw-ping.p3 { animation-delay: calc(3.2s / var(--speed)); }
+      @keyframes awPing {
+        0% { transform: scale(0.92); opacity: 0; }
+        12% { opacity: 0.55; }
+        100% { transform: scale(2.1); opacity: 0; border-color: rgba(111,125,255,0.0); }
+      }
+      .aw-particles { position: absolute; inset: 0; z-index: 15; pointer-events: none; will-change: transform; }
+      .aw-pt { position: absolute; border-radius: 50%; background: var(--c-cyan); opacity: 0; animation: awFloatUp linear infinite, awTwinkle ease-in-out infinite; }
+      @keyframes awFloatUp { from { transform: translateY(40px); } to { transform: translateY(-160px); } }
+      @keyframes awTwinkle { 0%,100% { opacity: 0; } 20%,80% { opacity: var(--pt-op, 0.6); } }
+      @keyframes awSpin { to { transform: rotate(360deg);} }
+      @keyframes awDrift1 { 0%,100%{ transform: translate(0,0) scale(1);} 33%{ transform: translate(18%,12%) scale(1.1);} 66%{ transform: translate(-10%,16%) scale(.95);} }
+      @keyframes awDrift2 { 0%,100%{ transform: translate(0,0) scale(1);} 33%{ transform: translate(-16%,10%) scale(1.08);} 66%{ transform: translate(10%,-12%) scale(.92);} }
+      @keyframes awDrift3 { 0%,100%{ transform: translate(0,0) scale(1);} 33%{ transform: translate(12%,-14%) scale(.95);} 66%{ transform: translate(-14%,-6%) scale(1.12);} }
+      @keyframes awDrift4 { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(-18%,-16%) scale(1.2);} }
+
+      @media (prefers-reduced-motion: reduce) {
+        .avro-welcome .aw-liquid, .avro-welcome .aw-blob, .avro-welcome .aw-core,
+        .avro-welcome .aw-sheen, .avro-welcome .aw-scanner, .avro-welcome .aw-orbWrap::after,
+        .avro-welcome .aw-scan-ring, .avro-welcome .aw-ring-dashed, .avro-welcome .aw-ping,
+        .avro-welcome .aw-pt, .avro-welcome .aw-wave i, .avro-welcome .aw-stamp.on { animation: none !important; }
+        .avro-welcome .aw-ping { display: none; }
+        .avro-welcome .aw-wave i { height: 60%; }
       }
     `;
     document.head.appendChild(style);
@@ -1263,157 +1596,56 @@ export default function EnergyEfficientStartPage() {
               }}
             />
           ) : (
-            <>
-              <img
-                src="/media/bg.jpeg"
-                alt="Background"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                }}
-              />
-              {/* Edge and corner fade to black */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  background: `
-                    radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.4) 65%, rgba(0,0,0,0.8) 85%, black 100%),
-                    linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.6) 100%),
-                    linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.6) 100%)
-                  `,
-                  pointerEvents: 'none',
-                }}
-              />
-              {/* Scrolling menu images at the bottom */}
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: '30px',
-                  left: 0,
-                  width: '100%',
-                  overflow: 'hidden',
-                  pointerEvents: 'none',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '24px',
-                    animation: 'menuScroll 20s linear infinite',
-                    width: 'max-content',
-                  }}
-                >
-                  {[...Array(2)].map((_, setIndex) =>
-                    [1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                      <img
-                        key={`menu-${setIndex}-${num}`}
-                        src={`/media/menu/${num}.png`}
-                        alt={`Menu ${num}`}
-                        style={{
-                          height: '125px',
-                          width: 'auto',
-                          objectFit: 'contain',
-                          flexShrink: 0,
-                          borderRadius: '8px',
-                        }}
-                      />
-                    ))
-                  )}
+            <div className="avro-welcome" ref={avroRef}>
+              <div className="aw-particles" />
+
+              <div className="aw-content">
+                <div className="aw-orbStage">
+                  <div className="aw-orbWrap">
+                    <div className="aw-ping" />
+                    <div className="aw-ping p2" />
+                    <div className="aw-ping p3" />
+                    <div className="aw-scan-ring"><span className="aw-comet" /></div>
+                    <div className="aw-ring-dashed"><span className="aw-comet c2" /></div>
+                    <div className="aw-orb">
+                      <div className="aw-liquid">
+                        <div className="aw-blob aw-b1" />
+                        <div className="aw-blob aw-b2" />
+                        <div className="aw-blob aw-b3" />
+                        <div className="aw-blob aw-b4" />
+                      </div>
+                      <div className="aw-core" />
+                      <div className="aw-sheen" />
+                      <div className="aw-scanner" />
+                      <div className="aw-rim" />
+                    </div>
+                    <div className="aw-orb-label"><b>Avro</b></div>
+                  </div>
+                </div>
+
+                <div className="aw-greeting">
+                  <div className="aw-eyebrow">Welcome back</div>
+                  <h1 className="aw-name">{userName || 'Guest'}</h1>
+                  <div className="aw-visit">
+                    <span className="aw-badge" id="aw-badge">0</span>
+                    <span className="aw-visit-text" id="aw-visit-text" />
+                  </div>
+                  <div className="aw-loyalty">
+                    <div className="aw-stamps" id="aw-stamps" />
+                    <div className="aw-loyalty-label" id="aw-loyalty-text" />
+                  </div>
                 </div>
               </div>
-              {/* Welcome text with typing effect - top right */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '100px',
-                  right: '120px',
-                  direction: 'rtl',
-                  textAlign: 'right',
-                  zIndex: 3,
-                  pointerEvents: 'none',
-                }}
-              >
-                <div
-                  style={{
-                    color: '#fff',
-                    fontSize: '84px',
-                    fontWeight: 600,
-                    minHeight: '100px',
-                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
-                  }}
-                >
-                  {welcomeTypingLine1}
-                  {welcomeTypingLine1 && !welcomeTypingLine2 && (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: '4px',
-                        height: '84px',
-                        backgroundColor: '#fff',
-                        marginRight: '5px',
-                        verticalAlign: 'middle',
-                        animation: 'blink 1s step-end infinite',
-                      }}
-                    />
-                  )}
-                </div>
-                <div
-                  style={{
-                    color: 'rgba(255,255,255,0.85)',
-                    fontSize: '60px',
-                    fontWeight: 400,
-                    marginTop: '24px',
-                    minHeight: '75px',
-                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
-                  }}
-                >
-                  {welcomeTypingLine2}
-                  {welcomeTypingLine2 && !welcomeTypingLine3 && (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: '4px',
-                        height: '60px',
-                        backgroundColor: '#fff',
-                        marginRight: '5px',
-                        verticalAlign: 'middle',
-                        animation: 'blink 1s step-end infinite',
-                      }}
-                    />
-                  )}
-                </div>
-                <div
-                  style={{
-                    color: 'rgba(255,255,255,0.85)',
-                    fontSize: '54px',
-                    fontWeight: 400,
-                    marginTop: '80px',
-                    minHeight: '70px',
-                    textShadow: '0 4px 16px rgba(0,0,0,0.7)',
-                  }}
-                >
-                  {welcomeTypingLine3}
-                  {welcomeTypingLine3 && (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: '4px',
-                        height: '54px',
-                        backgroundColor: '#fff',
-                        marginRight: '5px',
-                        verticalAlign: 'middle',
-                        animation: 'blink 1s step-end infinite',
-                      }}
-                    />
-                  )}
-                </div>
+
+              <div className="aw-status">
+                <span className="aw-tick">✓</span>
+                <span>Identity verified</span>
+                <span className="aw-wave"><i /><i /><i /><i /><i /><i /><i /></span>
               </div>
-            </>
+              <div className="aw-clock" id="aw-clock">—</div>
+
+              <div className="aw-grain" />
+            </div>
           )}
         </div>
       )}
