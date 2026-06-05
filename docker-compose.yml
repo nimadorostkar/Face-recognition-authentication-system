@@ -58,6 +58,10 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      # Use the host's network during build so pip/apt can reach the internet
+      # even when Docker's bridge/DNS is broken (fixes "[Errno 101] Network is
+      # unreachable" during `pip install`).
+      network: host
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: face_recognition_api
@@ -88,7 +92,10 @@ services:
       - face_recognition_network
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Build over the host network too (see note on the api service above).
+      network: host
     container_name: face_recognition_frontend
     restart: unless-stopped
     ports:
