@@ -224,30 +224,6 @@ export default function WebcamRecognition() {
         }}>
           احراز هویت با تشخیص چهره
         </h1>
-        <button
-          onClick={() => router.push('/users')}
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '10px',
-            color: '#a0a0b8',
-            padding: '8px 16px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            transition: 'all 0.2s',
-            fontFamily: 'inherit',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
-            e.currentTarget.style.color = '#fff';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-            e.currentTarget.style.color = '#a0a0b8';
-          }}
-        >
-          لیست کاربران
-        </button>
       </header>
 
       {/* Logo */}
